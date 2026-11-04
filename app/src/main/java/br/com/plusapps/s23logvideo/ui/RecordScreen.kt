@@ -5,6 +5,7 @@ import android.view.SurfaceView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FilterChip
@@ -29,12 +31,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.LifecycleStartEffect
-import br.com.plusapps.s23logvideo.record.VideoConfig
 
-private val MODES = listOf(
-    VideoConfig(3840, 2160, 30), VideoConfig(3840, 2160, 24),
-    VideoConfig(1920, 1080, 30), VideoConfig(1920, 1080, 24),
-)
+/** Resolução e fps; o Log/Normal é escolhido à parte (chip "LOG 10-bit"). */
+private data class Mode(val w: Int, val h: Int, val fps: Int)
+
+private val MODES = listOf(Mode(3840, 2160, 30), Mode(3840, 2160, 24), Mode(1920, 1080, 30), Mode(1920, 1080, 24))
 
 @Composable
 fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
@@ -61,13 +62,34 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
 
         // Topo: modo, espaço livre, status
         Column(Modifier.align(Alignment.TopStart).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            val cfg = vm.config
+            val canChange = !vm.recording && !vm.busy
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 MODES.forEach { m ->
+                    val modeCfg = cfg.withMode(m.w, m.h, m.fps)
                     FilterChip(
-                        selected = vm.config == m,
-                        onClick = { vm.selectConfig(m) },
-                        enabled = !vm.recording && !vm.busy,
-                        label = { Text(m.label) },
+                        selected = cfg.width == m.w && cfg.height == m.h && cfg.fps == m.fps,
+                        onClick = { vm.selectConfig(modeCfg) },
+                        enabled = canChange,
+                        label = { Text(modeCfg.label) },
+                    )
+                }
+                FilterChip(
+                    selected = cfg.isLog,
+                    onClick = { vm.selectConfig(cfg.withLog(!cfg.isLog)) },
+                    enabled = canChange,
+                    label = { Text("LOG 10-bit") },
+                )
+                if (cfg.isLog) {
+                    FilterChip(
+                        selected = vm.monitor709,
+                        onClick = { vm.toggleMonitor709() },
+                        enabled = !vm.recording,
+                        label = { Text("Monitor 709") },
                     )
                 }
                 vm.freeMinutes?.let { Hud("livre ≈ $it min") }

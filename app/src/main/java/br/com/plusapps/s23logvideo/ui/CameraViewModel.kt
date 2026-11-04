@@ -34,7 +34,12 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutex = Mutex()
 
-    var config by mutableStateOf(VideoConfig(3840, 2160, 30))
+    /** Log 10 bits por padrão (Fase 2). */
+    var config by mutableStateOf(VideoConfig(3840, 2160, 30, tenBit = true, curve = true))
+        private set
+
+    /** Preferência do usuário pelo monitor Rec.709; só tem efeito com a imagem em Log. */
+    var monitor709 by mutableStateOf(false)
         private set
     var recording by mutableStateOf(false)
         private set
@@ -80,10 +85,22 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
     fun selectConfig(new: VideoConfig) {
         if (recording || new == config) return
         config = new
+        applyMonitor()
         op("Reconfigurando…") {
             if (camera.isOpen) camera.open(renderer.surfaceTexture.await(), new)
             updateFreeSpace()
         }
+    }
+
+    fun toggleMonitor709() {
+        if (recording) return
+        monitor709 = !monitor709
+        applyMonitor()
+    }
+
+    /** A conversão Log → 709 só vale para imagem em Log; em Normal o preview fica como está. */
+    private fun applyMonitor() {
+        renderer.monitor709 = monitor709 && config.isLog
     }
 
     fun toggleRecording() = op(null) {
