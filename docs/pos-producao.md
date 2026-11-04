@@ -57,13 +57,22 @@ setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv
 - Presets de outros fabricantes (Apple Log, ARRI, Sony, V-Log): são curvas diferentes. O preset de Apple Log
   esmaga as sombras desta curva.
 
-### O que a skill de edição precisa para reconhecer o LogCam (ainda não aplicado)
+### Plus Studio (aplicado em 2026-11-04)
 
-1. `render.py` → `wide_gamut_chain`: devolver `""` quando o arquivo tiver a tag `com.logcam.logprofile`
-   (hoje ele converte BT.2020→709 na extração, antes de qualquer correção).
-2. `detect_color.py`: reconhecer a mesma tag como perfil `logcam` e usar como `grade` a cadeia acima (ou
-   chamar `tools/aplicar_lut.py`). Sem isso, as chaves `com.logcam.*` caem na regra de fabricante `logc`
-   (ARRI LogC) só porque "logcam" contém "logc". O nome do arquivo não tem relação com isso.
+O Plus Studio (`~/.claude/skills/plus-studio`) reconhece o LogCam e usa a LUT na extração:
+
+- `helpers/logcam.py` (novo): reconhece pela tag `com.logcam.logprofile` (takes antigos: `LogCam_*` + 10 bits +
+  BT.2020) e monta a cadeia acima. A LUT fica em `meus/luts/` (a pasta que as atualizações preservam).
+- `render.py`: a LUT converte antes do grade e o `wide_gamut_chain` é pulado para esses takes.
+- `grade.py`: o grade `auto` e a montagem `--candidates` partem da imagem já convertida.
+- `detect_color.py`: perfil `logcam`, confiança alta (antes: ARRI LogC, só porque "logcam" contém "logc"; o
+  nome do arquivo não tinha relação com isso).
+- `LOGCAM_LUT=sem_gamut` troca para a variante sem conversão de gamut (A/B).
+
+Conferido com as funções da própria skill no take `095220`: a saída do render tem saturação 0,357 (a certa; era
+0,438 com a conversão duplicada), igual ao `aplicar_lut.py`; vídeos que não são do LogCam passam como antes.
+As outras cópias (`edvid`, `edvid-antiga`, `edvid-lt`) não foram alteradas. Uma atualização do Plus Studio
+substitui os helpers e desfaz isso (ver `meus/luts/LEIA-LogCam.md` na skill).
 
 ## A/B de gamut
 
