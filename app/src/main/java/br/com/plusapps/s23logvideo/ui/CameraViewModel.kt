@@ -376,14 +376,24 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         )
     }
 
-    /** Troca de lente: reabre a câmera. A tele só vai até 1080p, então o modo desce junto. */
+    /** Modo (resolução) de antes de a tele forçar 1080p, para voltar a ele ao sair da tele. */
+    private var modeBeforeDowngrade: Pair<Int, Int>? = null
+
+    /** Troca de lente: reabre a câmera. A tele só vai até 1080p, então o modo desce junto (e volta depois). */
     fun selectLens(l: Lens) {
         if (recording || l == lens) return
         op("Trocando para ${l.label}…") {
             camera.selectLens(l)
             lens = l
             prefs.edit().putString(KEY_LENS, l.name).apply()
-            if (l.maxWidth < config.width) config = config.withMode(1920, 1080, config.fps)
+            val back = modeBeforeDowngrade
+            if (l.maxWidth < config.width) {
+                modeBeforeDowngrade = config.width to config.height
+                config = config.withMode(1920, 1080, config.fps)
+            } else if (back != null && back.first <= l.maxWidth) {
+                config = config.withMode(back.first, back.second, config.fps)
+                modeBeforeDowngrade = null
+            }
             renderer.sensorOrientation = camera.sensorOrientation
             pushMonitor()
             if (camera.isOpen) camera.open(renderer.surfaceTexture.await(), config)
@@ -458,6 +468,12 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
             )
         } else {
             "Falhou: arquivo descartado (veja Download/LogCam/gravacoes)"
+        }
+        // O resumo de um take bom some depois de 8 s; o de falha fica até o próximo take.
+        val shown = lastResult
+        if (report.optString("status") == "ok") scope.launch {
+            delay(8_000)
+            if (lastResult == shown) lastResult = null
         }
         updateFreeSpace()
     }

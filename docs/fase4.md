@@ -6,7 +6,7 @@ arquivo gravado nunca passa pelo shader.
 | Chip (linha de cima) | O que mostra |
 |---|---|
 | **LUT 709** | Aplica a LUT 3D (33³, textura 3D no shader) ao preview. É o **mesmo `.cube`** de `luts/`, empacotado nos assets: o que se vê no app é o que se vê no editor com a LUT. Só em Log. |
-| **False color** | Pinta faixas de exposição, em stops em relação ao cinza 18% (calculados com a inversa da `LogCurve`): **verde** = cinza 18% (±¼ stop), **rosa** = pele clara (+0,6 a +1,3), **amarelo** = ≥ +2 stops, **vermelho** = estourado, **azul** = ≤ −4, **roxo** = ≤ −6 (preto/ruído). O resto fica em cinza. É o guia mais confiável em Log. |
+| **False color** | Pinta faixas de exposição, em stops em relação ao cinza 18% (calculados com a inversa da `LogCurve`): **verde** = cinza 18% (±¼ stop), **rosa** = +0,6 a +1,3 stop (onde costuma ficar a pele clara; pele mais escura fica perto do verde ou um pouco abaixo), **amarelo** = ≥ +2 stops, **vermelho** = estourado, **azul** = ≤ −4, **roxo** = ≤ −6 (preto/ruído). O resto fica em cinza. É o guia mais confiável em Log. |
 | **Zebra** | Listras diagonais onde o sinal **gravado** passa do limite (padrão 90%; em Log o branco do sensor fica em ~94%). |
 | **Peaking** | Bordas em foco (Sobel na luma) pintadas numa cor. |
 | **Scopes** | Waveform (luma × posição horizontal) e histograma do sinal gravado. Linha branca/verde = cinza 18% (0,41 em Log); linha vermelha = 95%. |

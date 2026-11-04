@@ -80,7 +80,7 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
         )
 
         // Topo: modo, espaço livre, status
-        Column(Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.displayCutout).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.displayCutout).padding(12.dp).padding(end = 128.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val canChange = !vm.recording && !vm.busy
             Row(
                 Modifier.horizontalScroll(rememberScrollState()),
@@ -125,9 +125,10 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
                 vm.freeMinutes?.let { Hud("livre ≈ $it min") }
                 thermalLabel(vm.thermalStatus)?.let { Hud(it) }
                 vm.thermalHeadroom?.let { if (it >= 0.7f) Hud("aquecendo: %.0f%%".format(it * 100)) }
-                if (vm.monitor.falseColor) {
-                    Hud("verde = cinza 18% · rosa = pele · amarelo = alto · vermelho = estouro · azul/roxo = sombra")
-                }
+            }
+            // Legenda em linha própria e curta, para não cobrir o cronômetro.
+            if (vm.monitor.falseColor) {
+                Hud("verde 18% · rosa +1 stop · amarelo alto · vermelho estouro · azul/roxo sombra")
             }
             if (vm.status.isNotEmpty()) Hud(vm.status)
             vm.lastResult?.let { Hud(it) }
