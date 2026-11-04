@@ -94,6 +94,8 @@
         <div class="row" id="lenses"></div>
         <div class="row" id="modes"></div>
         <div class="row"><button class="b" id="logBtn">LOG 10-bit</button></div>
+        <label class="l">Estabilização <span class="msg">(eletrônica e super cortam o campo de visão)</span></label>
+        <div class="row" id="stab"></div>
       </div>
 
       <div class="panel">
@@ -219,6 +221,7 @@
     const maxW = (s.lenses.find((l) => l.name === s.lens) || { maxWidth: 3840 }).maxWidth;
     fill($("modes"), MODES.filter((m) => m[0] <= maxW).map((m) =>
       btn(`${m[0] >= 3840 ? "4K" : m[1] + "p"}${m[2]}`, s.config.w === m[0] && s.config.fps === m[2], () => cmd({ acao: "modo", w: m[0], h: m[1], fps: m[2] }), !canChange)));
+    fill($("stab"), (s.stabilizations || []).map((x) => btn(x.label, x.name === s.stabilization, () => cmd({ acao: "estabilizacao", valor: x.name }), !canChange)));
     const lb = $("logBtn"); lb.className = "b" + (s.config.log ? " sel" : ""); lb.disabled = !canChange;
     lb.onclick = () => cmd({ acao: "log", valor: !s.config.log });
 

@@ -139,6 +139,7 @@ class Recorder(
             .put("lente", JSONObject().put("nome", camera.lens.name).put("cameraId", camera.cameraId)
                 .put("fisica", camera.lens.physicalId ?: JSONObject.NULL)
                 .put("focalMm", camera.focalLengthMm?.toDouble() ?: JSONObject.NULL))
+            .put("estabilizacaoPedida", camera.stabilization.name)
             .put("bitrateDoEncoder", video.bitrate)
             .put("spsReescrito", video.spsPatched)
             .put("marcadoComoLog", logTagged)

@@ -86,7 +86,9 @@ data class Preset(val name: String, val settings: ManualSettings) {
         val DEFAULTS = listOf(
             Preset(
                 "Externa dia",
-                ManualSettings(ExposureMode.MANUAL, iso = 50, exposureNs = 1_000_000_000L / 60, wb = WbMode.KELVIN, kelvin = 5600),
+                // Sol direto sem filtro ND: ISO 50 a 1/60 estoura ~6 stops (medido: o automático escolheu 1/4900).
+                // 1/2000 é um ponto de partida para pessoa ou folha ao sol; ajuste no OBT conforme a cena.
+                ManualSettings(ExposureMode.MANUAL, iso = 50, exposureNs = 1_000_000_000L / 2000, wb = WbMode.KELVIN, kelvin = 5600),
             ),
             Preset(
                 "Igreja interna",

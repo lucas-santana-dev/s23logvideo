@@ -16,6 +16,9 @@ class FrameStats(private val expectedFrameNs: Long) {
     private var firstTs = 0L
     private var lastTs = 0L
     private val tonemapModes = HashMap<String, Int>()
+    private val videoStabModes = HashMap<String, Int>()
+    private val opticalStabModes = HashMap<String, Int>()
+    private var lastCrop: android.graphics.Rect? = null
     private var curveReturned = 0
     private var returnedCurvePoints = -1
     private var lastIso: Int? = null
@@ -39,6 +42,15 @@ class FrameStats(private val expectedFrameNs: Long) {
             curveReturned++
             returnedCurvePoints = it.getPointCount(TonemapCurve.CHANNEL_GREEN)
         }
+        r.get(CaptureResult.CONTROL_VIDEO_STABILIZATION_MODE)?.let {
+            val k = Names.of(CameraMetadata::class.java, "CONTROL_VIDEO_STABILIZATION_MODE_", it)
+            videoStabModes[k] = (videoStabModes[k] ?: 0) + 1
+        }
+        r.get(CaptureResult.LENS_OPTICAL_STABILIZATION_MODE)?.let {
+            val k = Names.of(CameraMetadata::class.java, "LENS_OPTICAL_STABILIZATION_MODE_", it)
+            opticalStabModes[k] = (opticalStabModes[k] ?: 0) + 1
+        }
+        lastCrop = r.get(CaptureResult.SCALER_CROP_REGION)
         lastIso = r.get(CaptureResult.SENSOR_SENSITIVITY)
         lastExposureNs = r.get(CaptureResult.SENSOR_EXPOSURE_TIME)
         lastFrameDurationNs = r.get(CaptureResult.SENSOR_FRAME_DURATION)
@@ -64,6 +76,9 @@ class FrameStats(private val expectedFrameNs: Long) {
             .put("quadrosPerdidos", dropped)
             .put("fpsMedio", if (seconds > 0) (frames - 1) / seconds else JSONObject.NULL)
             .put("tonemapModeDevolvido", JSONObject(tonemapModes as Map<*, *>))
+            .put("estabilizacaoVideoDevolvida", JSONObject(videoStabModes as Map<*, *>))
+            .put("estabilizacaoOpticaDevolvida", JSONObject(opticalStabModes as Map<*, *>))
+            .put("cropRegionFinal", lastCrop?.let { "${it.left},${it.top},${it.right},${it.bottom}" } ?: JSONObject.NULL)
             .put("quadrosComCurvaNoResult", curveReturned)
             .put("pontosDaCurvaDevolvida", returnedCurvePoints)
             .put("ultimoIso", lastIso ?: JSONObject.NULL)

@@ -8,6 +8,7 @@ import br.com.plusapps.s23logvideo.audio.AudioInput
 import br.com.plusapps.s23logvideo.audio.AudioMeter
 import br.com.plusapps.s23logvideo.audio.AudioSourceOpt
 import br.com.plusapps.s23logvideo.camera.Lens
+import br.com.plusapps.s23logvideo.camera.Stabilization
 import br.com.plusapps.s23logvideo.remote.Hotspot
 import br.com.plusapps.s23logvideo.remote.RemoteApi
 import br.com.plusapps.s23logvideo.remote.RemoteServer
@@ -190,6 +191,10 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         renderer.displayDegrees = degrees
     }
 
+    /** Estabilização de vídeo (Fase 7). Trocar reabre a câmera: o modo vai nos parâmetros da sessão. */
+    var stabilization by mutableStateOf(Stabilization.OIS)
+        private set
+
     init {
         prefs.getString(KEY_LENS, null)?.let { n -> Lens.entries.firstOrNull { it.name == n } }?.let {
             runCatching { camera.selectLens(it); lens = it }
@@ -203,6 +208,8 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
             )
         }
         withGyro = prefs.getBoolean(KEY_GYRO, true)
+        stabilization = Stabilization.fromName(prefs.getString(KEY_STAB, null))
+        camera.stabilization = stabilization
         // O controle remoto volta ligado se estava ligado (celular posicionado longe, app reaberto).
         if (prefs.getBoolean(KEY_REMOTE, false)) scope.launch(Dispatchers.Main) { startRemote() }
         camera.settings = settings
@@ -219,6 +226,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         if (!camera.isOpen) {
             renderer.sensorOrientation = camera.sensorOrientation
             camera.open(renderer.surfaceTexture.await(), config)
+            syncStabilization()
         }
         updateFreeSpace()
     }
@@ -234,12 +242,35 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         camera.close()
     }
 
+    /** Pela configuração que o app quer (não pela que a câmera abriu por último). */
+    val availableStabilizations get() = camera.availableStabilizations(config.tenBit)
+
+    fun selectStabilization(s: Stabilization) {
+        if (recording || s == stabilization) return
+        stabilization = s
+        camera.stabilization = s
+        prefs.edit().putString(KEY_STAB, s.name).apply()
+        op("Trocando a estabilização…") {
+            if (camera.isOpen) camera.open(renderer.surfaceTexture.await(), config)
+            syncStabilization()
+            updateFreeSpace()
+        }
+    }
+
+    /** O controller pode ter caído para outro modo (a lente não oferece, ou 4K Log não aceita): reflete e avisa. */
+    private fun syncStabilization() {
+        stabilization = camera.stabilization
+        prefs.edit().putString(KEY_STAB, stabilization.name).apply()
+        camera.stabilizationFallback?.let { notify("Estabilização: $it", 8_000) }
+    }
+
     fun selectConfig(new: VideoConfig) {
         if (recording || new == config) return
         config = new
         pushMonitor()
         op("Reconfigurando…") {
             if (camera.isOpen) camera.open(renderer.surfaceTexture.await(), new)
+            syncStabilization()
             updateFreeSpace()
         }
     }
@@ -433,6 +464,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
             renderer.sensorOrientation = camera.sensorOrientation
             pushMonitor()
             if (camera.isOpen) camera.open(renderer.surfaceTexture.await(), config)
+            syncStabilization()
             updateFreeSpace()
         }
     }
@@ -590,6 +622,10 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
             .put("config", JSONObject().put("w", config.width).put("h", config.height).put("fps", config.fps)
                 .put("log", config.isLog).put("label", config.label))
             .put("lens", lens.name)
+            .put("stabilization", stabilization.name)
+            .put("stabilizations", org.json.JSONArray().apply {
+                availableStabilizations.forEach { put(JSONObject().put("name", it.name).put("label", it.label)) }
+            })
             .put("lenses", org.json.JSONArray().apply {
                 Lens.entries.forEach { put(JSONObject().put("name", it.name).put("label", it.label).put("maxWidth", it.maxWidth)) }
             })
@@ -621,6 +657,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
             "parar" -> if (recording) toggleRecording()
             "alternarGravacao" -> toggleRecording()
             "lente" -> selectLens(Lens.valueOf(c.getString("valor")))
+            "estabilizacao" -> selectStabilization(Stabilization.valueOf(c.getString("valor")))
             "modo" -> selectConfig(config.withMode(c.getInt("w"), c.getInt("h"), c.getInt("fps")))
             "log" -> selectConfig(config.withLog(c.getBoolean("valor")))
             "monitor" -> {
@@ -692,6 +729,8 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         op("Restaurando o padrão…") {
             camera.selectLens(Lens.MAIN)
             lens = Lens.MAIN
+            stabilization = Stabilization.OIS
+            camera.stabilization = Stabilization.OIS
             config = factory
             renderer.sensorOrientation = camera.sensorOrientation
             pushMonitor()
@@ -743,7 +782,14 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         if (withAudio) meter.start()
         val cam = report.optJSONObject("camera")
         val mux = report.optJSONObject("muxer")
-        lastResult = if (report.optString("status") == "ok") {
+        // Rede de segurança: 4K de verdade nunca fica abaixo de ~2 Mb/s. Valor muito baixo = quadros vazios
+        // (foi o caso da estabilização eletrônica em Log), ou imagem totalmente uniforme (tampada, estourada).
+        val mbps = mux?.optDouble("bitrateRealMbps", -1.0) ?: -1.0
+        val seconds = mux?.optDouble("duracaoVideoS", 0.0) ?: 0.0
+        val suspicious = report.optString("status") == "ok" && mbps in 0.0..2.0 && seconds >= 2.0
+        lastResult = if (suspicious) {
+            "ATENÇÃO: o vídeo ficou com %.2f Mb/s, parece vazio. Confira o arquivo (lente tampada? imagem toda branca ou preta?)".format(mbps)
+        } else if (report.optString("status") == "ok") {
             "Salvo: ${report.optString("arquivo")} · %.1f fps · perdidos %d · A−V %s ms".format(
                 cam?.optDouble("fpsMedio", 0.0) ?: 0.0,
                 cam?.optInt("quadrosPerdidos") ?: 0,
@@ -793,6 +839,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         private const val KEY_LENS = "lente"
         private const val KEY_AUDIO = "audio"
         private const val KEY_GYRO = "giro"
+        private const val KEY_STAB = "estab"
         private const val KEY_REMOTE = "remoto"
         private const val KEY_PIN = "pinRemoto"
     }
@@ -804,7 +851,9 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
                 if (message != null) status = message
                 try {
                     block()
-                    if (message != null) status = ""
+                    // Só apaga a mensagem da própria operação: um aviso postado dentro do bloco (ex.: a estabilização
+                    // que caiu para OIS) precisa continuar na tela.
+                    if (message != null && status == message) status = ""
                 } catch (t: Throwable) {
                     notify("Erro: ${t.message ?: t}", 10_000)
                 } finally {

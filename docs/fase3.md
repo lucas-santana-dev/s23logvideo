@@ -13,7 +13,7 @@ embaixo da tela (operável com o polegar), com uma "roda" de valores para cada a
 | **OBT** | roda 1/30 … 1/4000 + botão **180°** | Só aparecem obturadores que cabem no quadro (não derrubam o fps). 180° = 1/(2×fps): 1/60 em 30 fps, 1/48 em 24 fps. Em luz de rede 60 Hz (Brasil) prefira 1/60 ou 1/120 para não piscar. |
 | **WB** | AUTO · TRAVAR · KELVIN + roda 2300–10000 K | KELVIN converte a temperatura em `COLOR_CORRECTION_GAINS` pela calibração do sensor (método do DNG, ver abaixo). TRAVAR = `CONTROL_AWB_LOCK`. |
 | **FOCO** | slider ∞ ↔ perto, AF, Travar, Marcar A/B, → A / → B | Some se a lente for de foco fixo. → A/→ B fazem uma puxada de foco suave (1,5 s, ease-in-out). |
-| **PRESET** | lista + "Salvar atual" | Presets salvos no aparelho. Vêm três de partida: "Externa dia", "Igreja interna" e "Automático". × apaga. |
+| **PRESET** | lista + "Salvar atual" | Presets salvos no aparelho. Vêm três de partida: "Externa dia", "Igreja interna" e "Automático". "Externa dia" usa 1/2000 s (ISO 50): sem filtro ND, ISO 50 a 1/60 estoura ~6 stops ao sol (medido em 2026-11-04, o automático escolheu 1/4900). × apaga. |
 
 Em AUTO, ISO/OBT/FOCO mostram em **cinza** o que a câmera está medindo; travado ou manual, em
 **amarelo**. Os ajustes valem também durante a gravação (dá para puxar foco no meio do take) e ficam

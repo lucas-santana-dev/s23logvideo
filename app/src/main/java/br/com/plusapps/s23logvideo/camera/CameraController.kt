@@ -77,6 +77,31 @@ class CameraController(context: Context) {
     var config: VideoConfig? = null
         private set
 
+    /** Estabilização escolhida; vale a partir do próximo [open] (o modo vai nos parâmetros da sessão). */
+    @Volatile var stabilization = Stabilization.OIS
+
+    /** Preenchido se a combinação pedida não foi aceita e o controller voltou para OIS; o ViewModel avisa. */
+    @Volatile var stabilizationFallback: String? = null
+
+    /** Modos que ESTA lente aceita (a ultrawide não tem OIS; a frontal só aceita desligada). */
+    val availableStabilizations: List<Stabilization> get() = availableStabilizations(config?.tenBit == true)
+
+    /** Os modos para uma configuração (10 bits ou não), mesmo antes de a câmera abrir com ela. */
+    fun availableStabilizations(tenBit: Boolean): List<Stabilization> {
+            val modes = openCharacteristics.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)
+                ?.toList().orEmpty()
+            // MEDIDO no S23: com o perfil HLG10 (Log 10 bits) a câmera ACEITA a estabilização eletrônica e devolve
+            // "ON" no resultado, mas grava quadros vazios (vídeo verde, ~0,05 Mb/s) em 4K e em 1080p. Em 8 bits
+            // (Normal) funciona. Por isso a eletrônica só é oferecida fora do Log.
+            return Stabilization.entries.filter {
+                when (it) {
+                    Stabilization.NONE -> true
+                    Stabilization.OIS -> hasOis()
+                    else -> it.eisMode in modes && !tenBit
+                }
+            }
+        }
+
     /** Ajustes manuais atuais; quem muda chama [refresh]. */
     @Volatile var settings = ManualSettings()
 
@@ -135,7 +160,7 @@ class CameraController(context: Context) {
         preparedEncoder = VideoEncoder(config, persistentSurface, encoderHandler)
 
         val dev = manager.openAsync(cameraId, executor).also { device = it }
-        val outputs = listOf(preview, persistentSurface).map { s ->
+        fun outputs() = listOf(preview, persistentSurface).map { s ->
             OutputConfiguration(s).apply {
                 timestampBase = OutputConfiguration.TIMESTAMP_BASE_MONOTONIC
                 if (config.tenBit) dynamicRangeProfile = DynamicRangeProfiles.HLG10
@@ -143,7 +168,26 @@ class CameraController(context: Context) {
                 lens.physicalId?.let { setPhysicalCameraId(it) }
             }
         }
-        session = dev.createSessionAsync(outputs, executor)
+        fun sessionParams() = dev.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+            set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, stabilization.eisMode)
+        }.build()
+        stabilizationFallback = null
+        // Um modo que a lente não oferece vira OIS (ou nenhuma, sem OIS) antes de tentar.
+        if (stabilization !in availableStabilizations) {
+            stabilizationFallback = if (config.tenBit && stabilization.eisMode != CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_OFF) {
+                "${stabilization.label} não funciona com Log 10 bits (o vídeo sairia vazio); ficou em OIS"
+            } else "${stabilization.label} não existe nesta lente"
+            stabilization = if (Stabilization.OIS in availableStabilizations) Stabilization.OIS else Stabilization.NONE
+        }
+        session = try {
+            dev.createSessionAsync(outputs(), executor, sessionParams())
+        } catch (e: Exception) {
+            // A combinação 4K + Log 10 bits + este modo pode não ser aceita: volta para OIS em vez de ficar sem câmera.
+            if (stabilization == Stabilization.OIS || stabilization == Stabilization.NONE) throw e
+            stabilizationFallback = "${stabilization.label} não é aceita com ${config.label}${if (config.isLog) " Log" else ""}; voltou para OIS"
+            stabilization = Stabilization.OIS
+            dev.createSessionAsync(outputs(), executor, sessionParams())
+        }
         recording = false
         recordCallback = null
         refresh()
@@ -221,10 +265,14 @@ class CameraController(context: Context) {
             set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
             set(CaptureRequest.CONTROL_SCENE_MODE, CameraMetadata.CONTROL_SCENE_MODE_DISABLED)
             set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(cfg.fps, cfg.fps))
-            // EIS corta a imagem; a estabilização fica com o OIS (Fase 5 trata do giroscópio).
-            set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
+            // Estabilização escolhida (ver Stabilization): a eletrônica corta a imagem; o OIS não.
+            set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, stabilization.eisMode)
             if (hasOis()) {
-                set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON)
+                set(
+                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
+                    if (stabilization.ois) CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON
+                    else CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_OFF,
+                )
             }
             if (cfg.curve) {
                 val pts = LogCurve.tonemapPoints(maxCurvePoints())

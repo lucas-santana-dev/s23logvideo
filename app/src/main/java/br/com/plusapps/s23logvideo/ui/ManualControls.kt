@@ -42,7 +42,7 @@ import br.com.plusapps.s23logvideo.camera.ManualSettings
 import br.com.plusapps.s23logvideo.camera.WbMode
 
 /** Qual roda está aberta acima da barra. */
-enum class Panel { NONE, EXPOSURE, ISO, SHUTTER, WB, FOCUS, PRESETS, MONITOR, AUDIO, REMOTE }
+enum class Panel { NONE, EXPOSURE, ISO, SHUTTER, WB, FOCUS, PRESETS, MONITOR, AUDIO, REMOTE, STAB }
 
 private val Accent = Color(0xFFFFC107)
 private val PanelBg = Color(0xCC000000)
@@ -97,6 +97,7 @@ fun ManualControls(
             Panel.MONITOR -> MonitorPanel(vm)
             Panel.AUDIO -> AudioPanel(vm)
             Panel.REMOTE -> RemotePanel(vm)
+            Panel.STAB -> StabPanel(vm)
             Panel.NONE -> Unit
         }
 
@@ -138,6 +139,10 @@ fun ManualControls(
                 vm.refreshAddresses()
                 onPanel(Panel.REMOTE)
             }
+            BarButton(
+                "ESTAB.", vm.stabilization.short, panel == Panel.STAB,
+                active = vm.stabilization != br.com.plusapps.s23logvideo.camera.Stabilization.NONE,
+            ) { onPanel(Panel.STAB) }
         }
     }
 }
@@ -170,6 +175,34 @@ private fun FocusPanel(vm: CameraViewModel) {
             vm.focusB?.let { b -> BigButton("→ B ${distanceLabel(b)}") { vm.pullFocusTo(b) } }
         }
         Text("Toque na imagem para focar num ponto (o foco trava ali).", color = Color.LightGray, fontSize = 11.sp)
+    }
+}
+
+/** Estabilização de vídeo: OIS não corta; a eletrônica sim (o preview mostra o corte). */
+@Composable
+private fun StabPanel(vm: CameraViewModel) {
+    val canChange = !vm.recording && !vm.busy
+    Column(
+        Modifier.background(PanelBg, RoundedCornerShape(8.dp)).padding(8.dp).widthIn(max = 600.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            vm.availableStabilizations.forEach { s ->
+                BigButton(s.label, selected = s == vm.stabilization, enabled = canChange) { vm.selectStabilization(s) }
+            }
+        }
+        Text(
+            "OIS não corta a imagem, mas não segura caminhada. Eletrônica e Super seguram, e cortam o campo de visão " +
+                "(o preview mostra o corte). Trocar reabre a câmera; não dá durante a gravação.",
+            color = Color.LightGray, fontSize = 11.sp,
+        )
+        if (vm.config.tenBit) {
+            Text(
+                "Em Log 10 bits o S23 só aceita OIS ou nenhuma: a eletrônica grava quadros vazios. Para estabilizar o Log, " +
+                    "use o Gyroflow com o .gcsv de cada take (ou grave em Normal 8 bits para usar a eletrônica).",
+                color = Color(0xFFFFC107), fontSize = 11.sp,
+            )
+        }
     }
 }
 

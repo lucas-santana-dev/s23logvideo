@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -35,6 +36,7 @@ suspend fun CameraManager.openAsync(id: String, executor: Executor): CameraDevic
 suspend fun CameraDevice.createSessionAsync(
     outputs: List<OutputConfiguration>,
     executor: Executor,
+    sessionParameters: CaptureRequest? = null,
 ): CameraCaptureSession = suspendCancellableCoroutine { cont ->
     val config = SessionConfiguration(
         SessionConfiguration.SESSION_REGULAR, outputs, executor,
@@ -48,5 +50,7 @@ suspend fun CameraDevice.createSessionAsync(
             }
         }
     )
+    // Em vários aparelhos o modo de estabilização é "session key": tem que ir já na criação da sessão.
+    sessionParameters?.let { config.sessionParameters = it }
     createCaptureSession(config)
 }
