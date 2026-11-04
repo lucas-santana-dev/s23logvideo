@@ -8,6 +8,10 @@ import br.com.plusapps.s23logvideo.audio.AudioInput
 import br.com.plusapps.s23logvideo.audio.AudioMeter
 import br.com.plusapps.s23logvideo.audio.AudioSourceOpt
 import br.com.plusapps.s23logvideo.camera.Lens
+import br.com.plusapps.s23logvideo.remote.Hotspot
+import br.com.plusapps.s23logvideo.remote.RemoteApi
+import br.com.plusapps.s23logvideo.remote.RemoteServer
+import kotlinx.coroutines.runBlocking
 import br.com.plusapps.s23logvideo.audio.toDbfs
 import br.com.plusapps.s23logvideo.gl.MonitorOptions
 import br.com.plusapps.s23logvideo.gl.Scopes
@@ -96,8 +100,29 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         private set
     var freeMinutes by mutableStateOf<Long?>(null)
         private set
+    /** Mensagem curta na tela. Some sozinha (ver [notify]); só "Abrindo câmera…" e afins ficam até acabar. */
     var status by mutableStateOf("")
         private set
+    private var statusJob: Job? = null
+
+    /** Esconde os widgets: só ficam o botão de gravar, o cronômetro e o botão de mostrar de novo. */
+    var cleanScreen by mutableStateOf(false)
+        private set
+    private var warnedHot = false
+
+    fun toggleCleanScreen() {
+        cleanScreen = !cleanScreen
+    }
+
+    /** Mostra [msg] por [ms] e apaga (se nada mais tiver sido mostrado por cima). */
+    fun notify(msg: String, ms: Long = 5_000) {
+        status = msg
+        statusJob?.cancel()
+        statusJob = scope.launch {
+            delay(ms)
+            if (status == msg) status = ""
+        }
+    }
     var lastResult by mutableStateOf<String?>(null)
         private set
 
@@ -175,6 +200,8 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
             )
         }
         withGyro = prefs.getBoolean(KEY_GYRO, true)
+        // O controle remoto volta ligado se estava ligado (celular posicionado longe, app reaberto).
+        if (prefs.getBoolean(KEY_REMOTE, false)) scope.launch(Dispatchers.Main) { startRemote() }
         camera.settings = settings
         monitor = loadMonitor()
         val wanted = prefs.getString(KEY_LUT, null)?.takeIf { it in lutNames }
@@ -328,12 +355,15 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         val h = thermalHeadroom
         when {
             thermalStatus >= PowerManager.THERMAL_STATUS_CRITICAL && recording -> {
-                status = "Aparelho muito quente: gravação parada para salvar o arquivo."
+                notify("Aparelho muito quente: gravação parada para salvar o arquivo.", 15_000)
                 toggleRecording()
             }
-            thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE || (h != null && h >= 0.9f) ->
-                status = "Aparelho quente: o sistema pode parar a câmera em breve."
-            status.startsWith("Aparelho quente") -> status = ""
+            thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE || (h != null && h >= 0.9f) -> {
+                // Avisa uma vez ao entrar no estado; depois fica só o chip térmico colorido.
+                if (!warnedHot) notify("Aparelho quente: o sistema pode parar a câmera em breve.", 6_000)
+                warnedHot = true
+            }
+            else -> warnedHot = false
         }
     }
 
@@ -356,7 +386,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
             renderer.setLut(name, text)
             lutName = name
             prefs.edit().putString(KEY_LUT, name).apply()
-        }.onFailure { status = "LUT inválida ($name): ${it.message}" }
+        }.onFailure { notify("LUT inválida ($name): ${it.message}", 8_000) }
     }
 
     /** A LUT Log → 709 só vale para imagem em Log; em Normal o preview fica como está. */
@@ -420,6 +450,182 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         prefs.edit().putBoolean(KEY_GYRO, withGyro).apply()
     }
 
+
+    // ---- Controle remoto pela web ----
+    private var server: RemoteServer? = null
+    private val hotspot = Hotspot(app)
+
+    /** PIN de 4 dígitos que a página web pede; fixo entre aberturas do app (dá para trocar). */
+    var remotePin by mutableStateOf(prefs.getString(KEY_PIN, null) ?: RemoteServer.newPin().also { prefs.edit().putString(KEY_PIN, it).apply() })
+        private set
+    /** Endereço principal para digitar no navegador (null = servidor desligado). */
+    var remoteUrl by mutableStateOf<String?>(null)
+        private set
+    /** Todos os endereços (Wi-Fi, hotspot), com o nome da rede. */
+    var remoteAddresses by mutableStateOf<List<String>>(emptyList())
+        private set
+    var hotspotInfo by mutableStateOf<Hotspot.Info?>(null)
+        private set
+
+    /** A Activity troca isto por um pedido real da permissão NEARBY_WIFI_DEVICES. */
+    var askNearbyPermission: ((Boolean) -> Unit) -> Unit = { it(true) }
+
+    val remoteOn get() = server?.running == true
+
+    fun toggleRemote() = if (remoteOn) stopRemote() else startRemote()
+
+    fun startRemote() {
+        if (remoteOn) return
+        runCatching {
+            server = RemoteServer(app, remoteApi, remotePin).also { it.start() }
+            prefs.edit().putBoolean(KEY_REMOTE, true).apply()
+            refreshAddresses()
+            notify("Controle remoto ligado: abra ${remoteUrl ?: "o endereço"} no outro aparelho (PIN $remotePin)", 10_000)
+        }.onFailure { notify("Controle remoto falhou: ${it.message}", 10_000) }
+    }
+
+    fun stopRemote() {
+        server?.stop()
+        server = null
+        remoteUrl = null
+        remoteAddresses = emptyList()
+        prefs.edit().putBoolean(KEY_REMOTE, false).apply()
+    }
+
+    fun newRemotePin() {
+        remotePin = RemoteServer.newPin()
+        prefs.edit().putString(KEY_PIN, remotePin).apply()
+        if (remoteOn) { stopRemote(); startRemote() }
+    }
+
+    /** Liga/desliga a rede própria do app (hotspot local, sem internet). */
+    fun toggleHotspot() {
+        if (hotspot.active) {
+            hotspot.stop()
+            hotspotInfo = null
+            refreshAddresses()
+            return
+        }
+        askNearbyPermission { ok ->
+            if (!ok) {
+                notify("Sem a permissão de dispositivos Wi-Fi próximos não dá para criar a rede.", 8_000)
+                return@askNearbyPermission
+            }
+            hotspot.start { r ->
+                r.onSuccess {
+                    hotspotInfo = it
+                    if (!remoteOn) startRemote()
+                    // A interface do hotspot leva um instante para ganhar IP.
+                    scope.launch { repeat(4) { delay(1_500); refreshAddresses() } }
+                }.onFailure { notify(it.message ?: "Hotspot falhou", 10_000) }
+            }
+        }
+    }
+
+    fun refreshAddresses() {
+        val port = server?.port ?: return
+        val all = RemoteServer.addresses()
+        remoteAddresses = all.map { (iface, ip) ->
+            val net = when {
+                iface == "wlan0" -> "Wi-Fi"
+                iface.startsWith("swlan") || iface.startsWith("ap") || iface == "wlan1" || iface.startsWith("wlan2") -> "rede do app"
+                iface.startsWith("rmnet") || iface.startsWith("ccmni") -> "dados móveis"
+                else -> iface
+            }
+            "http://$ip:$port  ($net)"
+        }.filterNot { it.contains("dados móveis") }
+        remoteUrl = all.firstOrNull { it.first == "wlan0" }?.let { "${it.second}:$port" }
+            ?: all.firstOrNull { !it.first.startsWith("rmnet") }?.let { "${it.second}:$port" }
+    }
+
+    private val remoteApi = object : RemoteApi {
+        override fun stateJson(): JSONObject = runBlocking(Dispatchers.Main) { remoteState() }
+        override fun command(cmd: JSONObject): JSONObject = runBlocking(Dispatchers.Main) {
+            runCatching { remoteCommand(cmd) }.getOrElse { JSONObject().put("ok", false).put("erro", it.message) }
+        }
+        override fun latestJpeg() = renderer.latestJpeg()
+        override fun setStreaming(on: Boolean) {
+            renderer.remoteStreaming = on
+        }
+    }
+
+    /** Estado para a página web (lido a cada ~0,5 s). */
+    private fun remoteState(): JSONObject {
+        val s = settings
+        val m = measured
+        return JSONObject()
+            .put("recording", recording).put("busy", busy).put("elapsedMs", elapsedMs).put("dropped", droppedFrames)
+            .put("status", status).put("lastResult", lastResult ?: JSONObject.NULL)
+            .put("config", JSONObject().put("w", config.width).put("h", config.height).put("fps", config.fps)
+                .put("log", config.isLog).put("label", config.label))
+            .put("lens", lens.name)
+            .put("lenses", org.json.JSONArray().apply {
+                Lens.entries.forEach { put(JSONObject().put("name", it.name).put("label", it.label).put("maxWidth", it.maxWidth)) }
+            })
+            .put("settings", s.toJson())
+            .put("measured", JSONObject().put("iso", m.iso ?: JSONObject.NULL).put("exposureNs", m.exposureNs ?: JSONObject.NULL)
+                .put("focusDiopters", m.focusDiopters?.toDouble() ?: JSONObject.NULL))
+            .put("isoValues", org.json.JSONArray(isoValues))
+            .put("shutterValues", org.json.JSONArray(shutterValues))
+            .put("shutter180Ns", shutter180Ns)
+            .put("minFocusDiopters", minFocusDiopters.toDouble())
+            .put("hasManualSensor", hasManualSensor)
+            .put("monitor", JSONObject().put("lut", monitor.lut).put("falseColor", monitor.falseColor)
+                .put("zebra", monitor.zebra).put("peaking", monitor.peaking).put("scopes", monitor.scopes))
+            .put("lutNames", org.json.JSONArray(lutNames)).put("lutName", lutName ?: JSONObject.NULL)
+            .put("presets", org.json.JSONArray(presets.map { it.name }))
+            .put("audio", JSONObject().put("on", withAudio).put("db", audioDb.toDouble()).put("clipped", audioClipped)
+                .put("gainDb", audioInput.gainDb))
+            .put("thermal", JSONObject().put("status", thermalStatus).put("headroom", thermalHeadroom?.toDouble() ?: JSONObject.NULL))
+            .put("freeMinutes", freeMinutes ?: JSONObject.NULL)
+            .put("histogram", scopes?.let { org.json.JSONArray(it.histogram) } ?: JSONObject.NULL)
+            .put("focusA", focusA?.toDouble() ?: JSONObject.NULL).put("focusB", focusB?.toDouble() ?: JSONObject.NULL)
+    }
+
+    /** Um comando da página web: {"acao": "...", ...}. Roda na thread principal. */
+    private fun remoteCommand(c: JSONObject): JSONObject {
+        val s = settings
+        when (c.optString("acao")) {
+            "gravar" -> if (!recording) toggleRecording()
+            "parar" -> if (recording) toggleRecording()
+            "alternarGravacao" -> toggleRecording()
+            "lente" -> selectLens(Lens.valueOf(c.getString("valor")))
+            "modo" -> selectConfig(config.withMode(c.getInt("w"), c.getInt("h"), c.getInt("fps")))
+            "log" -> selectConfig(config.withLog(c.getBoolean("valor")))
+            "monitor" -> {
+                val o = monitor
+                updateMonitor(o.copy(
+                    lut = c.optBoolean("lut", o.lut), falseColor = c.optBoolean("falseColor", o.falseColor),
+                    zebra = c.optBoolean("zebra", o.zebra), peaking = c.optBoolean("peaking", o.peaking),
+                    scopes = c.optBoolean("scopes", o.scopes),
+                ))
+            }
+            "lut" -> selectLut(c.getString("valor"))
+            "exposicao" -> setExposureMode(ExposureMode.valueOf(c.getString("valor")))
+            "iso" -> updateSettings(s.copy(exposure = ExposureMode.MANUAL, iso = c.getInt("valor")))
+            "obturador" -> updateSettings(s.copy(exposure = ExposureMode.MANUAL, exposureNs = c.getLong("valor")))
+            "wb" -> setWbMode(WbMode.valueOf(c.getString("valor")))
+            "kelvin" -> updateSettings(s.copy(wb = WbMode.KELVIN, kelvin = c.getInt("valor")))
+            "foco" -> setFocusMode(FocusMode.valueOf(c.getString("valor")))
+            "distanciaFoco" -> setFocus(c.getDouble("valor").toFloat())
+            "tocar" -> {
+                val p = renderer.imageToBuffer(c.getDouble("u").toFloat(), c.getDouble("v").toFloat())
+                    ?: return JSONObject().put("ok", false).put("erro", "fora da imagem")
+                camera.tapToFocus(p.first, p.second) { d ->
+                    scope.launch { if (d != null) updateSettings(settings.copy(focus = FocusMode.MANUAL, focusDiopters = d)) }
+                }
+            }
+            "marcarA" -> markFocusA()
+            "marcarB" -> markFocusB()
+            "puxarA" -> focusA?.let { pullFocusTo(it) }
+            "puxarB" -> focusB?.let { pullFocusTo(it) }
+            "preset" -> presets.firstOrNull { it.name == c.getString("valor") }?.let { applyPreset(it) }
+            "ganho" -> updateAudioInput(audioInput.copy(gainDb = c.getInt("valor")))
+            else -> return JSONObject().put("ok", false).put("erro", "ação desconhecida: ${c.optString("acao")}")
+        }
+        return JSONObject().put("ok", true)
+    }
+
     fun toggleRecording() = op(null) {
         if (recording) stopRecordingLocked() else startRecordingLocked()
     }
@@ -441,7 +647,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
                 if (tick++ % 25 == 0) {
                     updateFreeSpace()
                     if ((freeMinutes ?: Long.MAX_VALUE) < 1) {
-                        status = "Espaço acabando: gravação parada."
+                        notify("Espaço acabando: gravação parada.", 15_000)
                         toggleRecording()
                         break
                     }
@@ -484,6 +690,8 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
             mutex.withLock {
                 runCatching { if (recording) stopRecordingLocked() }
                 meter.stop()
+                server?.stop()
+                hotspot.stop()
                 camera.release()
                 renderer.release()
             }
@@ -507,6 +715,8 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         private const val KEY_LENS = "lente"
         private const val KEY_AUDIO = "audio"
         private const val KEY_GYRO = "giro"
+        private const val KEY_REMOTE = "remoto"
+        private const val KEY_PIN = "pinRemoto"
     }
 
     private fun op(message: String?, block: suspend () -> Unit) {
@@ -518,7 +728,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
                     block()
                     if (message != null) status = ""
                 } catch (t: Throwable) {
-                    status = "Erro: ${t.message ?: t}"
+                    notify("Erro: ${t.message ?: t}", 10_000)
                 } finally {
                     busy = false
                 }

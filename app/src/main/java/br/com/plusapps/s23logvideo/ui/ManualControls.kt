@@ -3,6 +3,8 @@ package br.com.plusapps.s23logvideo.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,7 +42,7 @@ import br.com.plusapps.s23logvideo.camera.ManualSettings
 import br.com.plusapps.s23logvideo.camera.WbMode
 
 /** Qual roda está aberta acima da barra. */
-enum class Panel { NONE, EXPOSURE, ISO, SHUTTER, WB, FOCUS, PRESETS, MONITOR, AUDIO }
+enum class Panel { NONE, EXPOSURE, ISO, SHUTTER, WB, FOCUS, PRESETS, MONITOR, AUDIO, REMOTE }
 
 private val Accent = Color(0xFFFFC107)
 private val PanelBg = Color(0xCC000000)
@@ -50,7 +52,11 @@ private val PanelBg = Color(0xCC000000)
  * para o ajuste selecionado. Em AUTO, os botões mostram o que a câmera está medindo, em cinza.
  */
 @Composable
-fun ManualControls(vm: CameraViewModel, panel: Panel, onPanel: (Panel) -> Unit, modifier: Modifier = Modifier) {
+fun ManualControls(
+    vm: CameraViewModel, panel: Panel, onPanel: (Panel) -> Unit, modifier: Modifier = Modifier,
+    /** Em retrato a barra não cabe: rola na horizontal. */
+    scrollBar: Boolean = false,
+) {
     val s = vm.settings
     val m = vm.measured
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -90,10 +96,14 @@ fun ManualControls(vm: CameraViewModel, panel: Panel, onPanel: (Panel) -> Unit, 
             Panel.PRESETS -> PresetsPanel(vm)
             Panel.MONITOR -> MonitorPanel(vm)
             Panel.AUDIO -> AudioPanel(vm)
+            Panel.REMOTE -> RemotePanel(vm)
             Panel.NONE -> Unit
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            (if (scrollBar) Modifier.horizontalScroll(rememberScrollState()) else Modifier),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
             val manualExp = s.exposure == ExposureMode.MANUAL
             BarButton("EXP", s.exposure.label(), panel == Panel.EXPOSURE, active = s.exposure != ExposureMode.AUTO) {
                 onPanel(Panel.EXPOSURE)
@@ -123,6 +133,10 @@ fun ManualControls(vm: CameraViewModel, panel: Panel, onPanel: (Panel) -> Unit, 
             ) {
                 vm.refreshAudioDevices()
                 onPanel(Panel.AUDIO)
+            }
+            BarButton("REMOTO", if (vm.remoteOn) "ON" else "OFF", panel == Panel.REMOTE, active = vm.remoteOn) {
+                vm.refreshAddresses()
+                onPanel(Panel.REMOTE)
             }
         }
     }
@@ -156,6 +170,33 @@ private fun FocusPanel(vm: CameraViewModel) {
             vm.focusB?.let { b -> BigButton("→ B ${distanceLabel(b)}") { vm.pullFocusTo(b) } }
         }
         Text("Toque na imagem para focar num ponto (o foco trava ali).", color = Color.LightGray, fontSize = 11.sp)
+    }
+}
+
+/** Controle remoto pela web: liga o servidor, mostra PIN e endereços, cria a rede própria. */
+@Composable
+private fun RemotePanel(vm: CameraViewModel) {
+    Column(
+        Modifier.background(PanelBg, RoundedCornerShape(8.dp)).padding(8.dp).widthIn(max = 600.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            BigButton(if (vm.remoteOn) "Desligar remoto" else "Ligar remoto", selected = vm.remoteOn) { vm.toggleRemote() }
+            BigButton(if (vm.hotspotInfo != null) "Desligar rede do app" else "Criar rede do app", selected = vm.hotspotInfo != null) {
+                vm.toggleHotspot()
+            }
+            BigButton("Novo PIN") { vm.newRemotePin() }
+        }
+        Text("PIN: ${vm.remotePin}", color = Accent, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        if (vm.remoteOn) {
+            Text("No PC ou no outro celular, abra no navegador:", color = Color.LightGray, fontSize = 11.sp)
+            vm.remoteAddresses.forEach { Text(it, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+            if (vm.remoteAddresses.isEmpty()) Text("(sem rede: conecte ao Wi-Fi ou crie a rede do app)", color = Color.LightGray, fontSize = 12.sp)
+        }
+        vm.hotspotInfo?.let {
+            Text("Rede do app: ${it.ssid}   senha: ${it.password}", color = Color(0xFF80D8FF), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Conecte o outro aparelho a essa rede e abra o endereço \"rede do app\" acima.", color = Color.LightGray, fontSize = 11.sp)
+        }
     }
 }
 

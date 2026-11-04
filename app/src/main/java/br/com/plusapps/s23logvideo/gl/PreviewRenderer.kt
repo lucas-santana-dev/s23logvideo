@@ -104,6 +104,25 @@ class PreviewRenderer {
 
     val surfaceTexture = CompletableDeferred<SurfaceTexture>()
 
+    // ---- Preview remoto (MJPEG): a mesma imagem da tela, reduzida, a ~10 fps ----
+    /** Liga a produção de JPEGs (só enquanto houver alguém assistindo pela web). */
+    @Volatile var remoteStreaming = false
+    @Volatile private var jpeg: Pair<ByteArray, Long>? = null
+    private val jpegThread = HandlerThread("jpeg").apply { start() }
+    private val jpegHandler = Handler(jpegThread.looper)
+    private val remoteBusy = java.util.concurrent.atomic.AtomicBoolean(false)
+    private var remoteFbo = 0
+    private var remoteTex = 0
+    private var remoteW = 0
+    private var remoteH = 0
+    private var remotePixels: ByteBuffer? = null
+    private var remoteBitmap: android.graphics.Bitmap? = null
+    private var jpegCount = 0L
+    private val remoteMvp = FloatArray(16)
+
+    /** Último JPEG do preview e o número do quadro. */
+    fun latestJpeg(): Pair<ByteArray, Long>? = jpeg
+
     private val quad: FloatBuffer = floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f).toBuffer()
     private val uv: FloatBuffer = floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f).toBuffer()
 
@@ -181,18 +200,8 @@ class PreviewRenderer {
     fun viewToBuffer(x: Float, y: Float): Pair<Float, Float>? {
         val g = lastGeom ?: return null
         if (g.w == 0 || g.h == 0) return null
-        val px = (2f * x / g.w - 1f) / g.sx
-        val py = (1f - 2f * y / g.h) / g.sy
-        if (px !in -1f..1f || py !in -1f..1f) return null
-        val a = Math.toRadians(-g.rot.toDouble())
-        val qx = (px * kotlin.math.cos(a) - py * kotlin.math.sin(a)).toFloat()
-        val qy = (px * kotlin.math.sin(a) + py * kotlin.math.cos(a)).toFloat()
-        val u = (qx + 1f) / 2f
-        val v = (qy + 1f) / 2f
-        val st = FloatArray(4)
-        Matrix.multiplyMV(st, 0, g.tex, 0, floatArrayOf(u, v, 0f, 1f), 0)
         // t = 0 é a primeira linha do buffer (topo da imagem); a matriz já inclui o flip vertical.
-        return st[0].coerceIn(0f, 1f) to st[1].coerceIn(0f, 1f)
+        return ndcToBuffer(g, (2f * x / g.w - 1f) / g.sx, (1f - 2f * y / g.h) / g.sy)
     }
 
     fun release() {
@@ -205,6 +214,7 @@ class PreviewRenderer {
             EGL14.eglTerminate(display)
         }
         thread.quitSafely()
+        jpegThread.quitSafely()
     }
 
     private fun draw() {
@@ -280,8 +290,80 @@ class PreviewRenderer {
         )
         GLES20.glUniform2f(GLES20.glGetUniformLocation(program, "uTexel"), 1f / inputWidth, 1f / inputHeight)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+
+        // Preview remoto: a cada 3 quadros, a mesma imagem (com LUT/false color...) num FBO pequeno.
+        if (remoteStreaming && frameCount % 3 == 1L && remoteBusy.compareAndSet(false, true)) {
+            renderRemote(rot, srcAspect)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            GLES20.glViewport(0, 0, viewW, viewH)
+        }
+        if (!o.scopes) frameCount++
         EGLExt.eglPresentationTimeANDROID(display, window, texture.timestamp)
         EGL14.eglSwapBuffers(display, window)
+    }
+
+    /** Desenha no FBO remoto, lê os pixels e manda comprimir em JPEG noutra thread. */
+    private fun renderRemote(rot: Int, aspect: Float) {
+        val w = if (aspect >= 1f) 640 else 360
+        val h = (w / aspect).toInt().coerceIn(16, 1280) and 1.inv()
+        if (w != remoteW || h != remoteH) {
+            val ids = IntArray(1)
+            if (remoteTex == 0) { GLES20.glGenTextures(1, ids, 0); remoteTex = ids[0] }
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, remoteTex)
+            GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, w, h, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+            if (remoteFbo == 0) { GLES20.glGenFramebuffers(1, ids, 0); remoteFbo = ids[0] }
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, remoteFbo)
+            GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, remoteTex, 0)
+            remoteW = w
+            remoteH = h
+            remotePixels = ByteBuffer.allocateDirect(w * h * 4).order(ByteOrder.nativeOrder())
+            remoteBitmap = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        }
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, remoteFbo)
+        GLES20.glViewport(0, 0, w, h)
+        // Sem barras (a imagem ocupa o FBO todo) e de cabeça para baixo: o glReadPixels lê de baixo
+        // para cima, e o Bitmap espera de cima para baixo.
+        Matrix.setIdentityM(remoteMvp, 0)
+        Matrix.scaleM(remoteMvp, 0, 1f, -1f, 1f)
+        Matrix.rotateM(remoteMvp, 0, rot.toFloat(), 0f, 0f, 1f)
+        GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(program, "uMvp"), 1, false, remoteMvp, 0)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        val px = remotePixels!!
+        px.position(0)
+        GLES20.glReadPixels(0, 0, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, px)
+        val bmp = remoteBitmap!!
+        jpegHandler.post {
+            try {
+                px.position(0)
+                bmp.copyPixelsFromBuffer(px)
+                val out = java.io.ByteArrayOutputStream(64 * 1024)
+                bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
+                jpeg = out.toByteArray() to ++jpegCount
+            } catch (_: Throwable) {
+            } finally {
+                remoteBusy.set(false)
+            }
+        }
+    }
+
+    /**
+     * Converte um ponto da imagem remota (u, v em 0..1, origem no canto superior esquerdo, como o JPEG
+     * do stream) em coordenadas do buffer da câmera, para o toque para focar pela web.
+     */
+    fun imageToBuffer(u: Float, v: Float): Pair<Float, Float>? {
+        val g = lastGeom ?: return null
+        return ndcToBuffer(g, 2f * u - 1f, 1f - 2f * v)
+    }
+
+    private fun ndcToBuffer(g: Geom, px: Float, py: Float): Pair<Float, Float>? {
+        if (px !in -1f..1f || py !in -1f..1f) return null
+        val a = Math.toRadians(-g.rot.toDouble())
+        val qx = (px * kotlin.math.cos(a) - py * kotlin.math.sin(a)).toFloat()
+        val qy = (px * kotlin.math.sin(a) + py * kotlin.math.cos(a)).toFloat()
+        val st = FloatArray(4)
+        Matrix.multiplyMV(st, 0, g.tex, 0, floatArrayOf((qx + 1f) / 2f, (qy + 1f) / 2f, 0f, 1f), 0)
+        return st[0].coerceIn(0f, 1f) to st[1].coerceIn(0f, 1f)
     }
 
     private fun bindCommon(p: Int, matrix: FloatArray) {

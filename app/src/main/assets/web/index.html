@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LogCam Remoto</title>
+<style>
+  :root {
+    --bg: #0d0f12; --panel: #171a1f; --line: #2a2f37; --text: #e8eaed; --muted: #9aa0a6;
+    --accent: #ffc107; --rec: #e53935; --ok: #00e676; --warn: #ffc107; --bad: #ff5252; --info: #80d8ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { padding: 12px 16px 32px; }
+  h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  .top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .chip.warn { color: var(--warn); border-color: #5c4a10; } .chip.bad { color: var(--bad); border-color: #5c2020; } .chip.info { color: var(--info); }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+  .viewer { position: relative; background: #000; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); }
+  .viewer img { display: block; width: 100%; height: auto; max-height: 78vh; object-fit: contain; cursor: crosshair; background: #000; }
+  .viewer .tap { position: absolute; width: 64px; height: 64px; border: 2px solid var(--accent); border-radius: 4px; transform: translate(-50%, -50%); pointer-events: none; display: none; }
+  .viewer .hint { position: absolute; left: 10px; bottom: 8px; font-size: 12px; color: #fff; background: rgba(0,0,0,.55); padding: 2px 8px; border-radius: 4px; }
+  .recbar { display: flex; align-items: center; gap: 14px; margin: 12px 0; flex-wrap: wrap; }
+  .recbtn { width: 64px; height: 64px; border-radius: 50%; border: 4px solid #fff; background: transparent; padding: 6px; cursor: pointer; flex: none; }
+  .recbtn span { display: block; width: 100%; height: 100%; border-radius: 50%; background: var(--rec); transition: border-radius .15s; }
+  .recbtn.on span { border-radius: 6px; }
+  .recbtn:disabled { opacity: .5; cursor: default; }
+  .timer { font: 700 26px/1 ui-monospace, "SF Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+  .timer.on { color: var(--bad); }
+  .vu { width: 140px; height: 10px; background: #222; border-radius: 5px; overflow: hidden; }
+  .vu div { height: 100%; width: 0; background: var(--ok); transition: width .1s; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  .row:last-child { margin-bottom: 0; }
+  button.b { min-height: 40px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: #22262d; color: var(--text); font: 600 14px system-ui, sans-serif; cursor: pointer; }
+  button.b.sel { background: var(--accent); color: #111; border-color: var(--accent); }
+  button.b:disabled { opacity: .45; cursor: default; }
+  select, input[type=range] { width: 100%; }
+  select { min-height: 40px; background: #22262d; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 0 8px; font: 14px system-ui, sans-serif; }
+  label.l { font-size: 12px; color: var(--muted); display: block; margin: 4px 0; }
+  .val { font-weight: 700; color: var(--accent); }
+  .msg { font-size: 13px; color: var(--muted); min-height: 18px; }
+  .pin { max-width: 360px; margin: 18vh auto; text-align: center; }
+  .pin input { font: 700 32px ui-monospace, monospace; letter-spacing: 10px; width: 180px; text-align: center; padding: 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  .hist { width: 100%; height: 60px; display: block; }
+</style>
+</head>
+<body>
+<div id="login" class="pin" hidden>
+  <h1>LogCam Remoto</h1>
+  <p class="msg">Digite o PIN que aparece no celular (botão REMOTO).</p>
+  <input id="pinIn" inputmode="numeric" maxlength="4" autocomplete="off">
+  <div class="row" style="justify-content:center;margin-top:12px"><button class="b sel" id="pinOk">Entrar</button></div>
+  <p class="msg" id="pinErr"></p>
+</div>
+
+<div id="app" hidden>
+  <div class="top">
+    <h1>LogCam Remoto</h1>
+    <span class="chip" id="cMode">-</span>
+    <span class="chip" id="cLens">-</span>
+    <span class="chip" id="cFree">-</span>
+    <span class="chip" id="cTherm" hidden>-</span>
+    <span class="chip" id="cConn">conectando…</span>
+  </div>
+
+  <div class="layout">
+    <div>
+      <div class="viewer" id="viewer">
+        <img id="preview" alt="Preview ao vivo da câmera">
+        <div class="tap" id="tapMark"></div>
+        <div class="hint">Clique na imagem para focar</div>
+      </div>
+      <div class="recbar">
+        <button class="recbtn" id="rec" aria-label="Gravar"><span></span></button>
+        <div>
+          <div class="timer" id="timer">00:00:00</div>
+          <div class="msg" id="dropped"></div>
+        </div>
+        <div>
+          <label class="l">Áudio <span id="dbTxt"></span></label>
+          <div class="vu"><div id="vu"></div></div>
+        </div>
+      </div>
+      <div class="msg" id="status"></div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h2>Lente e modo</h2>
+        <div class="row" id="lenses"></div>
+        <div class="row" id="modes"></div>
+        <div class="row"><button class="b" id="logBtn">LOG 10-bit</button></div>
+      </div>
+
+      <div class="panel">
+        <h2>Monitor</h2>
+        <div class="row" id="monitor"></div>
+        <div class="row"><select id="lutSel" aria-label="LUT"></select></div>
+        <canvas class="hist" id="hist" width="320" height="60" hidden></canvas>
+      </div>
+
+      <div class="panel">
+        <h2>Exposição</h2>
+        <div class="row" id="expMode"></div>
+        <label class="l">ISO <span class="val" id="isoTxt"></span></label>
+        <select id="isoSel"></select>
+        <label class="l">Obturador <span class="val" id="shTxt"></span></label>
+        <div class="row"><select id="shSel" style="flex:1"></select><button class="b" id="sh180">180°</button></div>
+      </div>
+
+      <div class="panel">
+        <h2>Balanço de branco</h2>
+        <div class="row" id="wbMode"></div>
+        <label class="l">Temperatura <span class="val" id="kTxt"></span></label>
+        <input type="range" id="kRange" min="2300" max="10000" step="100">
+      </div>
+
+      <div class="panel" id="focusPanel">
+        <h2>Foco</h2>
+        <div class="row" id="focusMode"></div>
+        <label class="l">Distância <span class="val" id="fTxt"></span> <span class="msg">(esquerda = infinito)</span></label>
+        <input type="range" id="fRange" min="0" max="10" step="0.01">
+        <div class="row" style="margin-top:8px">
+          <button class="b" data-a="marcarA">Marcar A</button><button class="b" data-a="marcarB">Marcar B</button>
+          <button class="b" data-a="puxarA" id="pA">→ A</button><button class="b" data-a="puxarB" id="pB">→ B</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Presets e áudio</h2>
+        <div class="row" id="presets"></div>
+        <label class="l">Ganho do áudio <span class="val" id="gTxt"></span></label>
+        <input type="range" id="gRange" min="-12" max="24" step="3">
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const qs = new URLSearchParams(location.search);
+  let pin = qs.get("k") || safeGet("logcamPin") || "";
+  let st = null, failures = 0, dragging = {};
+
+  function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function safeSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+  const MODES = [[3840,2160,30],[3840,2160,24],[1920,1080,30],[1920,1080,24]];
+  const fmtTime = (ms) => { const s = Math.floor(ms / 1000); const p = (n) => String(n).padStart(2, "0"); return `${p(Math.floor(s/3600))}:${p(Math.floor(s/60)%60)}:${p(s%60)}`; };
+  const shLabel = (ns) => { const d = 1e9 / ns; return d >= 1 ? `1/${Math.round(d)}` : `${(ns/1e9).toFixed(1)}s`; };
+  const dist = (d) => d == null ? "-" : d <= 0.02 ? "∞" : (1/d < 1 ? `${Math.round(100/d)} cm` : `${(1/d).toFixed(1)} m`);
+
+  async function cmd(obj) {
+    try {
+      const r = await fetch(`/api/cmd?k=${encodeURIComponent(pin)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj) });
+      const j = await r.json();
+      if (!j.ok && j.erro) $("status").textContent = "Erro: " + j.erro;
+      poll();
+    } catch (e) { $("status").textContent = "Sem conexão com o celular"; }
+  }
+
+  function btn(label, selected, onClick, disabled) {
+    const b = document.createElement("button");
+    b.className = "b" + (selected ? " sel" : "");
+    b.textContent = label;
+    b.disabled = !!disabled;
+    b.onclick = onClick;
+    return b;
+  }
+  // Só recria os botões quando algo muda: recriar a cada leitura "comeria" cliques.
+  function fill(el, nodes) {
+    const key = nodes.map((n) => n.textContent + "|" + n.className + "|" + n.disabled).join("§");
+    if (el.dataset.key === key) return;
+    el.dataset.key = key;
+    el.replaceChildren(...nodes);
+  }
+  function fillSelect(sel, values, label, current) {
+    const key = values.join(",");
+    if (sel.dataset.key !== key) {
+      sel.replaceChildren(...values.map((v) => { const o = document.createElement("option"); o.value = v; o.textContent = label(v); return o; }));
+      sel.dataset.key = key;
+    }
+    if (document.activeElement !== sel && current != null) {
+      const best = values.reduce((a, v) => Math.abs(v - current) < Math.abs(a - current) ? v : a, values[0]);
+      sel.value = best;
+    }
+  }
+
+  function render() {
+    const s = st, set = s.settings, busy = s.busy, rec = s.recording;
+    const canChange = !rec && !busy;
+    $("cMode").textContent = `${s.config.label} ${s.config.log ? "· LOG" : "· Normal"}`;
+    $("cLens").textContent = (s.lenses.find((l) => l.name === s.lens) || {}).label || s.lens;
+    $("cFree").textContent = s.freeMinutes != null ? `${s.freeMinutes} min livres` : "-";
+    const h = s.thermal.headroom, ts = s.thermal.status, th = $("cTherm");
+    th.hidden = !(ts >= 1 || (h != null && h >= 0.7));
+    th.textContent = "🌡 " + (h != null ? Math.round(h * 100) + "%" : "estado " + ts);
+    th.className = "chip" + ((ts >= 3 || (h != null && h >= 0.95)) ? " bad" : (ts >= 2 || (h != null && h >= 0.85)) ? " warn" : "");
+
+    const recBtn = $("rec");
+    recBtn.classList.toggle("on", rec);
+    recBtn.disabled = busy;
+    recBtn.setAttribute("aria-label", rec ? "Parar" : "Gravar");
+    $("timer").textContent = fmtTime(s.elapsedMs);
+    $("timer").classList.toggle("on", rec);
+    $("dropped").textContent = rec ? `perdidos ${s.dropped}` : "";
+    const db = s.audio.db, pct = Math.max(0, Math.min(1, (db + 60) / 60));
+    $("vu").style.width = (pct * 100) + "%";
+    $("vu").style.background = db > -3 ? "var(--bad)" : db > -12 ? "var(--warn)" : "var(--ok)";
+    $("dbTxt").textContent = s.audio.on ? (db <= -99 ? "-∞ dB" : Math.round(db) + " dB") + (s.audio.clipped ? " CLIP" : "") : "(sem microfone)";
+    $("status").textContent = s.status || s.lastResult || "";
+
+    fill($("lenses"), s.lenses.map((l) => btn(l.label, l.name === s.lens, () => cmd({ acao: "lente", valor: l.name }), !canChange)));
+    const maxW = (s.lenses.find((l) => l.name === s.lens) || { maxWidth: 3840 }).maxWidth;
+    fill($("modes"), MODES.filter((m) => m[0] <= maxW).map((m) =>
+      btn(`${m[0] >= 3840 ? "4K" : m[1] + "p"}${m[2]}`, s.config.w === m[0] && s.config.fps === m[2], () => cmd({ acao: "modo", w: m[0], h: m[1], fps: m[2] }), !canChange)));
+    const lb = $("logBtn"); lb.className = "b" + (s.config.log ? " sel" : ""); lb.disabled = !canChange;
+    lb.onclick = () => cmd({ acao: "log", valor: !s.config.log });
+
+    const mo = s.monitor;
+    fill($("monitor"), [
+      ...(s.config.log ? [btn("LUT", mo.lut, () => cmd({ acao: "monitor", lut: !mo.lut }))] : []),
+      btn("False color", mo.falseColor, () => cmd({ acao: "monitor", falseColor: !mo.falseColor })),
+      btn("Zebra", mo.zebra, () => cmd({ acao: "monitor", zebra: !mo.zebra })),
+      btn("Peaking", mo.peaking, () => cmd({ acao: "monitor", peaking: !mo.peaking })),
+      btn("Histograma", mo.scopes, () => cmd({ acao: "monitor", scopes: !mo.scopes })),
+    ]);
+    const ls = $("lutSel");
+    if (ls.dataset.key !== s.lutNames.join(",")) {
+      ls.replaceChildren(...s.lutNames.map((n) => { const o = document.createElement("option"); o.value = n; o.textContent = n.replace(/\.cube$/, ""); return o; }));
+      ls.dataset.key = s.lutNames.join(",");
+    }
+    if (document.activeElement !== ls && s.lutName) ls.value = s.lutName;
+    drawHist(s.histogram);
+
+    const manual = set.exposicao === "MANUAL";
+    fill($("expMode"), [["AUTO","Auto"],["LOCK","Travar"],["MANUAL","Manual"]].map(([v, n]) =>
+      btn(n, set.exposicao === v, () => cmd({ acao: "exposicao", valor: v }), v === "MANUAL" && !s.hasManualSensor)));
+    const isoNow = manual ? set.iso : s.measured.iso;
+    $("isoTxt").textContent = (isoNow ?? "-") + (manual ? "" : " (auto)");
+    fillSelect($("isoSel"), s.isoValues, String, isoNow);
+    const shNow = manual ? set.exposicaoNs : s.measured.exposureNs;
+    $("shTxt").textContent = (shNow ? shLabel(shNow) : "-") + (manual ? "" : " (auto)");
+    fillSelect($("shSel"), s.shutterValues, shLabel, shNow);
+    $("sh180").textContent = `180° (${shLabel(s.shutter180Ns)})`;
+
+    fill($("wbMode"), [["AUTO","Auto"],["LOCK","Travar"],["KELVIN","Kelvin"]].map(([v, n]) =>
+      btn(n, set.wb === v, () => cmd({ acao: "wb", valor: v }))));
+    if (!dragging.k) $("kRange").value = set.kelvin;
+    $("kTxt").textContent = set.wb === "KELVIN" ? set.kelvin + " K" : set.wb === "LOCK" ? "travado" : "auto";
+
+    const fp = $("focusPanel"); fp.hidden = !(s.minFocusDiopters > 0);
+    fill($("focusMode"), [["AUTO","AF"],["MANUAL","Travar"]].map(([v, n]) => btn(n, set.foco === v, () => cmd({ acao: "foco", valor: v }))));
+    const fr = $("fRange"); fr.max = s.minFocusDiopters;
+    const fNow = set.foco === "MANUAL" ? set.focoDioptrias : s.measured.focusDiopters;
+    if (!dragging.f && fNow != null) fr.value = fNow;
+    $("fTxt").textContent = dist(fNow) + (set.foco === "AUTO" ? " (AF)" : "");
+    $("pA").textContent = "→ A " + (s.focusA != null ? dist(s.focusA) : ""); $("pA").disabled = s.focusA == null;
+    $("pB").textContent = "→ B " + (s.focusB != null ? dist(s.focusB) : ""); $("pB").disabled = s.focusB == null;
+
+    fill($("presets"), s.presets.map((n) => btn(n, false, () => cmd({ acao: "preset", valor: n }))));
+    if (!dragging.g) $("gRange").value = s.audio.gainDb;
+    $("gTxt").textContent = (s.audio.gainDb > 0 ? "+" : "") + s.audio.gainDb + " dB";
+    $("gRange").disabled = rec;
+  }
+
+  function drawHist(h) {
+    const c = $("hist");
+    c.hidden = !h;
+    if (!h) return;
+    const g = c.getContext("2d"), max = Math.max(1, ...h);
+    g.clearRect(0, 0, c.width, c.height);
+    g.fillStyle = "rgba(255,255,255,.8)";
+    const bw = c.width / h.length;
+    h.forEach((v, i) => { const y = Math.log(1 + v) / Math.log(1 + max) * c.height; g.fillRect(i * bw, c.height - y, bw - 0.5, y); });
+    g.fillStyle = "rgba(0,230,118,.9)";
+    const gray = st && st.config.log ? 0.41 : 0.409;
+    g.fillRect(c.width * gray, 0, 1, c.height);
+  }
+
+  async function poll() {
+    try {
+      const r = await fetch(`/api/state?k=${encodeURIComponent(pin)}`, { cache: "no-store" });
+      if (r.status === 401) { showLogin("PIN inválido"); return; }
+      st = await r.json();
+      failures = 0;
+      $("cConn").textContent = "conectado"; $("cConn").className = "chip info";
+      render();
+    } catch (e) {
+      if (++failures > 2) { $("cConn").textContent = "sem conexão"; $("cConn").className = "chip bad"; }
+    }
+  }
+
+  function startPreview() {
+    const img = $("preview");
+    img.src = `/preview.mjpeg?k=${encodeURIComponent(pin)}&t=${Date.now()}`;
+    // O stream cai quando a câmera reabre ou a rede oscila: reconecta.
+    img.onerror = () => setTimeout(startPreview, 1500);
+  }
+
+  function showLogin(err) {
+    $("app").hidden = true; $("login").hidden = false;
+    $("pinErr").textContent = err || "";
+    $("pinIn").focus();
+  }
+  async function tryPin(p) {
+    const r = await fetch(`/api/state?k=${encodeURIComponent(p)}`).catch(() => null);
+    if (!r || r.status === 401) { showLogin(r ? "PIN inválido" : "Sem conexão com o celular"); return; }
+    pin = p; safeSet("logcamPin", p);
+    $("login").hidden = true; $("app").hidden = false;
+    startPreview(); poll();
+    setInterval(poll, 500);
+  }
+  $("pinOk").onclick = () => tryPin($("pinIn").value.trim());
+  $("pinIn").onkeydown = (e) => { if (e.key === "Enter") tryPin($("pinIn").value.trim()); };
+
+  // Controles
+  $("rec").onclick = () => cmd({ acao: "alternarGravacao" });
+  $("isoSel").onchange = (e) => cmd({ acao: "iso", valor: Number(e.target.value) });
+  $("shSel").onchange = (e) => cmd({ acao: "obturador", valor: Number(e.target.value) });
+  $("sh180").onclick = () => st && cmd({ acao: "obturador", valor: st.shutter180Ns });
+  $("lutSel").onchange = (e) => cmd({ acao: "lut", valor: e.target.value });
+  function slider(id, key, action, conv) {
+    const el = $(id);
+    el.oninput = () => { dragging[key] = true; if (key === "f") $("fTxt").textContent = dist(Number(el.value)); cmd({ acao: action, valor: conv(el.value) }); };
+    el.onchange = () => { dragging[key] = false; };
+  }
+  slider("kRange", "k", "kelvin", Number);
+  slider("fRange", "f", "distanciaFoco", Number);
+  $("gRange").onchange = (e) => cmd({ acao: "ganho", valor: Number(e.target.value) });
+  document.querySelectorAll("button[data-a]").forEach((b) => b.onclick = () => cmd({ acao: b.dataset.a }));
+
+  // Clique na imagem = toque para focar naquele ponto.
+  $("preview").onclick = (e) => {
+    const img = e.currentTarget, r = img.getBoundingClientRect();
+    const nw = img.naturalWidth || 16, nh = img.naturalHeight || 9;
+    const scale = Math.min(r.width / nw, r.height / nh), w = nw * scale, h = nh * scale;
+    const ox = (r.width - w) / 2, oy = (r.height - h) / 2;
+    const u = (e.clientX - r.left - ox) / w, v = (e.clientY - r.top - oy) / h;
+    if (u < 0 || u > 1 || v < 0 || v > 1) return;
+    const m = $("tapMark");
+    m.style.left = (e.clientX - r.left) + "px"; m.style.top = (e.clientY - r.top) + "px"; m.style.display = "block";
+    setTimeout(() => m.style.display = "none", 900);
+    cmd({ acao: "tocar", u, v });
+  };
+  // Atalho: espaço grava/para.
+  document.addEventListener("keydown", (e) => {
+    if (e.code === "Space" && !["INPUT", "SELECT"].includes(document.activeElement.tagName)) { e.preventDefault(); cmd({ acao: "alternarGravacao" }); }
+  });
+
+  if (pin) tryPin(pin); else showLogin();
+})();
+</script>
+</body>
+</html>

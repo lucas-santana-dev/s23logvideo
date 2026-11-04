@@ -73,6 +73,24 @@ class MainActivity : ComponentActivity() {
                     LaunchedEffect(recording) {
                         val power = getSystemService(android.os.PowerManager::class.java)
                         if (power.isSustainedPerformanceModeSupported) window.setSustainedPerformanceMode(recording)
+                        // A orientação do arquivo é decidida no início do take: trava a tela durante a gravação.
+                        requestedOrientation = if (recording) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED
+                        else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                    }
+                    // Rede do app (hotspot): precisa da permissão de dispositivos Wi-Fi próximos.
+                    var nearbyCallback by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
+                    val nearbyLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+                        nearbyCallback?.invoke(ok)
+                        nearbyCallback = null
+                    }
+                    LaunchedEffect(Unit) {
+                        cameraVm.askNearbyPermission = { cb ->
+                            if (granted(Manifest.permission.NEARBY_WIFI_DEVICES)) cb(true)
+                            else {
+                                nearbyCallback = cb
+                                nearbyLauncher.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
+                            }
+                        }
                     }
 
                     when {
