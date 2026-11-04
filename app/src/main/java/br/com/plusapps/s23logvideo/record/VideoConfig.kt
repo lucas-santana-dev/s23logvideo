@@ -5,8 +5,10 @@ import android.media.MediaFormat
 import org.json.JSONObject
 
 /**
- * Parâmetros de vídeo de uma gravação. `tenBit` e `curve` já existem para a Fase 2;
- * na Fase 1 a gravação usa 8 bits com a curva padrão.
+ * Parâmetros de vídeo de uma gravação.
+ *  - `tenBit`: sessão HLG10 (P010, BT.2020) e HEVC Main10;
+ *  - `curve`: curva Log da `LogCurve` aplicada pelo ISP (TONEMAP_MODE_CONTRAST_CURVE).
+ * Log = os dois ligados (Fase 2). Normal = 8 bits com a curva da Samsung.
  */
 data class VideoConfig(
     val width: Int,
@@ -14,9 +16,15 @@ data class VideoConfig(
     val fps: Int,
     val tenBit: Boolean = false,
     val curve: Boolean = false,
-    val bitrate: Int = defaultBitrate(width, fps),
+    val bitrate: Int = defaultBitrate(width, fps, tenBit),
 ) {
+    val isLog get() = tenBit && curve
     val label get() = "${if (width >= 3840) "4K" else "${height}p"}$fps"
+
+    /** Mesma resolução e fps, alternando entre Log 10 bits e Normal 8 bits. */
+    fun withLog(log: Boolean) = VideoConfig(width, height, fps, tenBit = log, curve = log)
+
+    fun withMode(w: Int, h: Int, f: Int) = VideoConfig(w, h, f, tenBit, curve)
 
     /** HEVC alimentado por surface, Main ou Main10. */
     fun mediaFormat(): MediaFormat =
@@ -30,8 +38,13 @@ data class VideoConfig(
                 if (tenBit) MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10
                 else MediaCodecInfo.CodecProfileLevel.HEVCProfileMain
             )
-            if (tenBit) {
-                // Fase 0/1: marca como HLG/BT.2020. A Fase 2 troca para um arquivo sem transferência HDR.
+            if (tenBit && curve) {
+                // Log: gamut BT.2020 (o do perfil HLG10), mas SEM transferência HDR na marcação.
+                // Marcado como HLG, o editor aplicaria tone mapping de HDR em cima do Log.
+                setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT2020)
+                setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
+            } else if (tenBit) {
+                // 10 bits sem curva: é HLG de verdade, então a marcação HLG está certa.
                 setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT2020)
                 setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_HLG)
             } else {
@@ -46,10 +59,11 @@ data class VideoConfig(
         .put("tenBit", tenBit).put("curve", curve).put("bitrate", bitrate)
 
     companion object {
-        fun defaultBitrate(width: Int, fps: Int): Int = when {
+        /** 10 bits em Log tem mais detalhe nas sombras: 4K30 vai a 150 Mb/s (teto do encoder: 160). */
+        fun defaultBitrate(width: Int, fps: Int, tenBit: Boolean = false): Int = when {
             width >= 7680 || fps >= 60 -> 150_000_000
-            width >= 3840 -> 100_000_000
-            else -> 40_000_000
+            width >= 3840 -> if (tenBit) 150_000_000 else 100_000_000
+            else -> if (tenBit) 60_000_000 else 40_000_000
         }
     }
 }
