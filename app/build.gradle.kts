@@ -40,6 +40,12 @@ android {
     buildFeatures {
         compose = true
     }
+    // As LUTs de luts/ vão para os assets: o preview usa o mesmo .cube que o editor.
+    sourceSets {
+        getByName("main") {
+            assets.srcDir("../luts")
+        }
+    }
 }
 
 dependencies {

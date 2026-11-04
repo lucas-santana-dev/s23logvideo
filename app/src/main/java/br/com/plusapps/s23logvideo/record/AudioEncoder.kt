@@ -16,7 +16,11 @@ import org.json.JSONObject
  * O PTS vem de AudioRecord.getTimestamp(TIMEBASE_MONOTONIC), o mesmo relógio (System.nanoTime)
  * da câmera com TIMESTAMP_BASE_MONOTONIC: pts = t_ref + (quadro - quadro_ref) / 48000.
  */
-class AudioEncoder(private val sink: MuxerSink) {
+class AudioEncoder(
+    private val sink: MuxerSink,
+    private val context: android.content.Context,
+    private val input: br.com.plusapps.s23logvideo.audio.AudioInput,
+) {
     companion object {
         const val SAMPLE_RATE = 48_000
         const val CHANNELS = 2
@@ -31,6 +35,11 @@ class AudioEncoder(private val sink: MuxerSink) {
     @Volatile
     private var running = false
 
+    /** Pico do último bloco lido (0..1), para o VU do HUD. */
+    @Volatile var peak = 0f
+        private set
+
+    private val gain = input.gainLinear
     private var framesRead = 0L
     private var timestampFallbacks = 0
     private var error: Throwable? = null
@@ -38,17 +47,8 @@ class AudioEncoder(private val sink: MuxerSink) {
     @SuppressLint("MissingPermission")
     fun start() {
         val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT)
-        record = AudioRecord.Builder()
-            .setAudioSource(MediaRecorder.AudioSource.CAMCORDER)
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setSampleRate(SAMPLE_RATE)
-                    .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .build()
-            )
-            .setBufferSizeInBytes(maxOf(minBuf * 4, SAMPLE_RATE * BYTES_PER_FRAME / 2))
-            .build()
+        // Fonte, microfone preferido e AGC desligado vêm do AudioInput (Fase 5).
+        record = input.build(context, maxOf(minBuf * 4, SAMPLE_RATE * BYTES_PER_FRAME / 2))
         check(record.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord não inicializou" }
 
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, SAMPLE_RATE, CHANNELS).apply {
@@ -82,6 +82,7 @@ class AudioEncoder(private val sink: MuxerSink) {
         .put("quadrosLidos", framesRead)
         .put("segundosLidos", framesRead.toDouble() / SAMPLE_RATE)
         .put("ptsSemTimestamp", timestampFallbacks)
+        .put("entrada", runCatching { input.describe(context, record) }.getOrDefault(input.toString()))
         .put("erro", error?.toString() ?: JSONObject.NULL)
 
     private fun loop() {
@@ -104,6 +105,8 @@ class AudioEncoder(private val sink: MuxerSink) {
                     val want = buf.capacity() - buf.capacity() % BYTES_PER_FRAME
                     val n = record.read(buf, want)
                     if (n > 0) {
+                        br.com.plusapps.s23logvideo.audio.applyGain(buf, n, gain)
+                        peak = br.com.plusapps.s23logvideo.audio.pcm16Peak(buf, n)
                         // Atualiza a referência de tempo a cada ~1 s (corrige deriva entre os relógios).
                         val now = System.nanoTime()
                         if (refFrame < 0 || now - lastRefresh > 1_000_000_000L) {

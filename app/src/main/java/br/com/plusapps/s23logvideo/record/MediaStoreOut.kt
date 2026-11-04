@@ -33,11 +33,14 @@ object MediaStoreOut {
     }
 
     /** Grava um texto em Download/LogCam[/sub]; devolve o caminho relativo legível. */
-    fun writeReport(context: Context, fileName: String, text: String, subDir: String? = null): String {
+    fun writeReport(
+        context: Context, fileName: String, text: String, subDir: String? = null,
+        mime: String = "application/json",
+    ): String {
         val rel = if (subDir == null) REPORT_DIR else "$REPORT_DIR/$subDir"
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-            put(MediaStore.Downloads.MIME_TYPE, "application/json")
+            put(MediaStore.Downloads.MIME_TYPE, mime)
             put(MediaStore.Downloads.RELATIVE_PATH, rel)
             put(MediaStore.Downloads.IS_PENDING, 1)
         }
