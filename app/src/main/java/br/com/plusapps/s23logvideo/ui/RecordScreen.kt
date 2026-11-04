@@ -104,7 +104,7 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
                 )
                 val mo = vm.monitor
                 if (cfg.isLog) {
-                    FilterChip(mo.lut, { vm.updateMonitor(mo.copy(lut = !mo.lut)) }, label = { Text("LUT 709") })
+                    FilterChip(mo.lut, { vm.updateMonitor(mo.copy(lut = !mo.lut)) }, label = { Text("LUT") })
                 }
                 FilterChip(mo.falseColor, { vm.updateMonitor(mo.copy(falseColor = !mo.falseColor)) }, label = { Text("False color") })
                 FilterChip(mo.zebra, { vm.updateMonitor(mo.copy(zebra = !mo.zebra)) }, label = { Text("Zebra") })
