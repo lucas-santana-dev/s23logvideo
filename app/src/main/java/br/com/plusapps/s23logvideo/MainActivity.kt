@@ -68,6 +68,12 @@ class MainActivity : ComponentActivity() {
                         if (!permissions.all { granted(it) }) launcher.launch(permissions)
                     }
                     var showProbe by rememberSaveable { mutableStateOf(false) }
+                    // Fase 5: desempenho sustentado durante o take (clock estável em vez de picos que esquentam).
+                    val recording = cameraVm.recording
+                    LaunchedEffect(recording) {
+                        val power = getSystemService(android.os.PowerManager::class.java)
+                        if (power.isSustainedPerformanceModeSupported) window.setSustainedPerformanceMode(recording)
+                    }
 
                     when {
                         !cameraOk -> Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -24,10 +24,17 @@ class VideoEncoder(val config: VideoConfig, persistentSurface: Surface, handler:
     var outputFormat: String? = null
         private set
 
+    /** Bitrate efetivo, já limitado ao máximo que o encoder anuncia. */
+    val bitrate: Int
+
     init {
         val format = config.mediaFormat()
-        codecName = MediaCodecList(MediaCodecList.REGULAR_CODECS).findEncoderForFormat(format)
-            ?: error("nenhum encoder aceita $format")
+        val list = MediaCodecList(MediaCodecList.REGULAR_CODECS)
+        codecName = list.findEncoderForFormat(format) ?: error("nenhum encoder aceita $format")
+        val max = list.codecInfos.firstOrNull { it.name == codecName }
+            ?.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_HEVC)?.videoCapabilities?.bitrateRange?.upper
+        bitrate = if (max != null && config.bitrate > max) max else config.bitrate
+        format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
         codec = MediaCodec.createByCodecName(codecName)
         codec.setCallback(object : MediaCodec.Callback() {
             override fun onInputBufferAvailable(c: MediaCodec, index: Int) = Unit

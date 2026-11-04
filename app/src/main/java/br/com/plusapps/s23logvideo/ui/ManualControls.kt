@@ -40,7 +40,7 @@ import br.com.plusapps.s23logvideo.camera.ManualSettings
 import br.com.plusapps.s23logvideo.camera.WbMode
 
 /** Qual roda está aberta acima da barra. */
-enum class Panel { NONE, EXPOSURE, ISO, SHUTTER, WB, FOCUS, PRESETS, MONITOR }
+enum class Panel { NONE, EXPOSURE, ISO, SHUTTER, WB, FOCUS, PRESETS, MONITOR, AUDIO }
 
 private val Accent = Color(0xFFFFC107)
 private val PanelBg = Color(0xCC000000)
@@ -89,6 +89,7 @@ fun ManualControls(vm: CameraViewModel, panel: Panel, onPanel: (Panel) -> Unit, 
             Panel.FOCUS -> FocusPanel(vm)
             Panel.PRESETS -> PresetsPanel(vm)
             Panel.MONITOR -> MonitorPanel(vm)
+            Panel.AUDIO -> AudioPanel(vm)
             Panel.NONE -> Unit
         }
 
@@ -116,6 +117,13 @@ fun ManualControls(vm: CameraViewModel, panel: Panel, onPanel: (Panel) -> Unit, 
                 }
             }
             BarButton("PRESET", "★", panel == Panel.PRESETS, active = false) { onPanel(Panel.PRESETS) }
+            BarButton(
+                "ÁUDIO", if (vm.audioInput.gainDb == 0) "0 dB" else "%+d dB".format(vm.audioInput.gainDb),
+                panel == Panel.AUDIO, active = vm.audioInput.gainDb != 0, enabled = vm.withAudio,
+            ) {
+                vm.refreshAudioDevices()
+                onPanel(Panel.AUDIO)
+            }
         }
     }
 }
@@ -148,6 +156,41 @@ private fun FocusPanel(vm: CameraViewModel) {
             vm.focusB?.let { b -> BigButton("→ B ${distanceLabel(b)}") { vm.pullFocusTo(b) } }
         }
         Text("Toque na imagem para focar num ponto (o foco trava ali).", color = Color.LightGray, fontSize = 11.sp)
+    }
+}
+
+/** Entrada de áudio (Fase 5): fonte, microfone (interno/USB-C) e ganho manual. */
+@Composable
+private fun AudioPanel(vm: CameraViewModel) {
+    val a = vm.audioInput
+    val canChange = !vm.recording
+    Column(
+        Modifier.background(PanelBg, RoundedCornerShape(8.dp)).padding(8.dp).widthIn(max = 600.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("Fonte (sem AGC; ajuste só pelo ganho abaixo)", color = Color.LightGray, fontSize = 11.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            br.com.plusapps.s23logvideo.audio.AudioSourceOpt.entries.forEach { src ->
+                val ok = src != br.com.plusapps.s23logvideo.audio.AudioSourceOpt.UNPROCESSED || vm.unprocessedSupported
+                BigButton(src.label, selected = a.source == src, enabled = canChange && ok) {
+                    vm.updateAudioInput(a.copy(source = src))
+                }
+            }
+        }
+        Text("Microfone", color = Color.LightGray, fontSize = 11.sp)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            itemsIndexed(listOf<android.media.AudioDeviceInfo?>(null) + vm.audioDevices) { _, d ->
+                val label = d?.let { br.com.plusapps.s23logvideo.audio.AudioInput.deviceLabel(it) } ?: "Automático"
+                BigButton(label, selected = a.deviceId == (d?.id ?: 0), enabled = canChange) {
+                    vm.updateAudioInput(a.copy(deviceId = d?.id ?: 0))
+                }
+            }
+        }
+        Text("Ganho (picos da voz perto de -12 dBFS no VU)", color = Color.LightGray, fontSize = 11.sp)
+        Wheel((-12..24 step 3).toList(), a.gainDb, { if (it > 0) "+$it" else "$it" }) {
+            if (canChange) vm.updateAudioInput(a.copy(gainDb = it))
+        }
+        if (vm.recording) Text("Troca de entrada só fora da gravação.", color = Color.LightGray, fontSize = 11.sp)
     }
 }
 

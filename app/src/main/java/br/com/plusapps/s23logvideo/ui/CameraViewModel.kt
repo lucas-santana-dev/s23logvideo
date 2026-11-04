@@ -4,7 +4,10 @@ import android.app.Application
 import android.content.Context
 import android.os.PowerManager
 import android.os.StatFs
+import br.com.plusapps.s23logvideo.audio.AudioInput
 import br.com.plusapps.s23logvideo.audio.AudioMeter
+import br.com.plusapps.s23logvideo.audio.AudioSourceOpt
+import br.com.plusapps.s23logvideo.camera.Lens
 import br.com.plusapps.s23logvideo.audio.toDbfs
 import br.com.plusapps.s23logvideo.gl.MonitorOptions
 import br.com.plusapps.s23logvideo.gl.Scopes
@@ -71,7 +74,18 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
     var thermalHeadroom by mutableStateOf<Float?>(null)
         private set
     private val power = app.getSystemService(PowerManager::class.java)
-    private val meter = AudioMeter { AudioMeter.defaultRecord() }
+    private val meter = AudioMeter { audioInput.build(app, 16_384) }
+
+    // ---- Fase 5: lentes, áudio, giroscópio, térmico ----
+    var lens by mutableStateOf(Lens.MAIN)
+        private set
+    var audioInput by mutableStateOf(AudioInput())
+        private set
+    var withGyro by mutableStateOf(true)
+        private set
+    val unprocessedSupported = AudioInput.unprocessedSupported(app)
+    var audioDevices by mutableStateOf(AudioInput.inputs(app))
+        private set
     var recording by mutableStateOf(false)
         private set
     var busy by mutableStateOf(false)
@@ -144,6 +158,18 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     init {
+        prefs.getString(KEY_LENS, null)?.let { n -> Lens.entries.firstOrNull { it.name == n } }?.let {
+            runCatching { camera.selectLens(it); lens = it }
+            if (it.maxWidth < config.width) config = config.withMode(1920, 1080, config.fps)
+        }
+        prefs.getString(KEY_AUDIO, null)?.let { runCatching { JSONObject(it) }.getOrNull() }?.let { o ->
+            audioInput = AudioInput(
+                source = AudioSourceOpt.entries.firstOrNull { it.name == o.optString("fonte") } ?: AudioSourceOpt.UNPROCESSED,
+                gainDb = o.optInt("ganhoDb", 0),
+                deviceId = 0, // IDs de dispositivo mudam a cada conexão: começa sempre no automático
+            )
+        }
+        withGyro = prefs.getBoolean(KEY_GYRO, true)
         camera.settings = settings
         monitor = loadMonitor()
         val wanted = prefs.getString(KEY_LUT, null)?.takeIf { it in lutNames }
@@ -273,7 +299,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
                 measured = camera.measured
                 scopes = renderer.scopes
                 // VU: pico com queda de ~20 dB/s.
-                val peak = recorder?.audioPeak ?: meter.peak
+                val peak = recorder?.audioPeak ?: (meter.peak * audioInput.gainLinear).coerceAtMost(1f)
                 val db = toDbfs(peak)
                 hold = maxOf(db, hold - 2f)
                 audioDb = hold
@@ -281,9 +307,28 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
                 if (tick++ % 10 == 0) {
                     thermalStatus = power.currentThermalStatus
                     thermalHeadroom = power.getThermalHeadroom(10).takeIf { !it.isNaN() }
+                    recorder?.thermalSample(thermalStatus, thermalHeadroom)
+                    checkThermal()
                 }
                 delay(100)
             }
+        }
+    }
+
+    /**
+     * Avisa antes de o sistema derrubar a gravação e, no estado CRÍTICO, para o take por conta própria
+     * (o arquivo é fechado direito, em vez de o Android matar a câmera no meio).
+     */
+    private fun checkThermal() {
+        val h = thermalHeadroom
+        when {
+            thermalStatus >= PowerManager.THERMAL_STATUS_CRITICAL && recording -> {
+                status = "Aparelho muito quente: gravação parada para salvar o arquivo."
+                toggleRecording()
+            }
+            thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE || (h != null && h >= 0.9f) ->
+                status = "Aparelho quente: o sistema pode parar a câmera em breve."
+            status.startsWith("Aparelho quente") -> status = ""
         }
     }
 
@@ -326,6 +371,40 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /** Troca de lente: reabre a câmera. A tele só vai até 1080p, então o modo desce junto. */
+    fun selectLens(l: Lens) {
+        if (recording || l == lens) return
+        op("Trocando para ${l.label}…") {
+            camera.selectLens(l)
+            lens = l
+            prefs.edit().putString(KEY_LENS, l.name).apply()
+            if (l.maxWidth < config.width) config = config.withMode(1920, 1080, config.fps)
+            renderer.sensorOrientation = camera.sensorOrientation
+            pushMonitor()
+            if (camera.isOpen) camera.open(renderer.surfaceTexture.await(), config)
+            updateFreeSpace()
+        }
+    }
+
+    fun updateAudioInput(new: AudioInput) {
+        if (recording || new == audioInput) return
+        audioInput = new
+        prefs.edit().putString(KEY_AUDIO, JSONObject().put("fonte", new.source.name).put("ganhoDb", new.gainDb).toString()).apply()
+        // O medidor reabre com a nova entrada.
+        meter.stop()
+        if (withAudio) meter.start()
+    }
+
+    fun refreshAudioDevices() {
+        audioDevices = AudioInput.inputs(app)
+    }
+
+    fun toggleGyro() {
+        if (recording) return
+        withGyro = !withGyro
+        prefs.edit().putBoolean(KEY_GYRO, withGyro).apply()
+    }
+
     fun toggleRecording() = op(null) {
         if (recording) stopRecordingLocked() else startRecordingLocked()
     }
@@ -334,7 +413,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         check(camera.isOpen) { "câmera fechada" }
         meter.stop()
         audioClipped = false
-        val rec = Recorder(app, camera, withAudio)
+        val rec = Recorder(app, camera, withAudio, audioInput, withGyro)
         withContext(Dispatchers.Default) { rec.start(orientationHint = uprightRotation()) }
         recorder = rec
         recording = true
@@ -404,6 +483,9 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         private const val KEY_PRESETS = "presets"
         private const val KEY_MONITOR = "monitor"
         private const val KEY_LUT = "lut"
+        private const val KEY_LENS = "lente"
+        private const val KEY_AUDIO = "audio"
+        private const val KEY_GYRO = "giro"
     }
 
     private fun op(message: String?, block: suspend () -> Unit) {

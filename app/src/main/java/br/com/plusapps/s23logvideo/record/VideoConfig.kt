@@ -59,10 +59,13 @@ data class VideoConfig(
         .put("tenBit", tenBit).put("curve", curve).put("bitrate", bitrate)
 
     companion object {
-        /** 10 bits em Log tem mais detalhe nas sombras: 4K30 vai a 150 Mb/s (teto do encoder: 160). */
+        /**
+         * Fase 5: em 4K 10 bits, o máximo do encoder HEVC do S23 (160 Mb/s, medido na Fase 0). O
+         * VideoEncoder limita ao teto que o codec anunciar, caso outro aparelho tenha um teto menor.
+         */
         fun defaultBitrate(width: Int, fps: Int, tenBit: Boolean = false): Int = when {
-            width >= 7680 || fps >= 60 -> 150_000_000
-            width >= 3840 -> if (tenBit) 150_000_000 else 100_000_000
+            width >= 7680 || fps >= 60 -> 160_000_000
+            width >= 3840 -> if (tenBit) 160_000_000 else 100_000_000
             else -> if (tenBit) 60_000_000 else 40_000_000
         }
     }

@@ -46,11 +46,19 @@ data class Measured(
  * Os ajustes manuais ([settings]) entram no mesmo repeating request; mudar um ajuste só refaz o request.
  */
 class CameraController(context: Context) {
-    val cameraId = "0" // traseira principal (lógica); troca de lente fica para a Fase 5
     private val manager = context.getSystemService(CameraManager::class.java)
-    val characteristics: CameraCharacteristics = manager.getCameraCharacteristics(cameraId)
-    val sensorOrientation: Int = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
-    private val whiteBalance = WhiteBalance(characteristics)
+
+    /** Lente atual (Fase 5). Trocar exige reabrir a câmera: ver [open]. */
+    var lens = Lens.MAIN
+        private set
+    val cameraId get() = lens.openId
+
+    /** Características de quem forma a imagem: a câmera aberta ou, na tele, o sensor físico. */
+    var characteristics: CameraCharacteristics = manager.getCameraCharacteristics(lens.characteristicsId)
+        private set
+    private var openCharacteristics: CameraCharacteristics = characteristics
+    val sensorOrientation: Int get() = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
+    private var whiteBalance = WhiteBalance(characteristics)
 
     private val cameraThread = HandlerThread("camera").apply { start() }
     val cameraHandler = Handler(cameraThread.looper)
@@ -91,14 +99,30 @@ class CameraController(context: Context) {
 
     val isOpen get() = session != null
 
-    // Faixas do sensor (para as rodas da UI).
-    val isoRange: Range<Int> = characteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE) ?: Range(50, 3200)
-    val exposureRange: Range<Long> =
-        characteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE) ?: Range(100_000L, 100_000_000L)
+    // Faixas do sensor (para as rodas da UI); mudam com a lente.
+    val isoRange: Range<Int>
+        get() = characteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE) ?: Range(50, 3200)
+    val exposureRange: Range<Long>
+        get() = characteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE) ?: Range(100_000L, 100_000_000L)
     /** 0 = foco fixo. */
-    val minFocusDiopters: Float = characteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
-    val hasManualSensor = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
-        ?.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR) == true
+    val minFocusDiopters: Float
+        get() = characteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
+    val hasManualSensor
+        get() = openCharacteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+            ?.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR) == true
+    /** Distância focal (mm), para o relatório e o .gcsv. */
+    val focalLengthMm: Float?
+        get() = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
+
+    /** Troca a lente que o próximo [open] vai usar. */
+    fun selectLens(l: Lens) {
+        lens = l
+        characteristics = manager.getCameraCharacteristics(l.characteristicsId)
+        openCharacteristics = manager.getCameraCharacteristics(l.openId)
+        whiteBalance = WhiteBalance(characteristics)
+        autoGains = null
+        autoTransform = null
+    }
     val wbCalibrated get() = whiteBalance.calibrated
 
     /** Abre a câmera e configura a sessão para [config]. Reabre do zero se já estiver aberta. */
@@ -115,6 +139,8 @@ class CameraController(context: Context) {
             OutputConfiguration(s).apply {
                 timestampBase = OutputConfiguration.TIMESTAMP_BASE_MONOTONIC
                 if (config.tenBit) dynamicRangeProfile = DynamicRangeProfiles.HLG10
+                // Tele: stream direto do sensor físico 6, sem passar pelo zoom da câmera lógica.
+                lens.physicalId?.let { setPhysicalCameraId(it) }
             }
         }
         session = dev.createSessionAsync(outputs, executor)
@@ -301,7 +327,7 @@ class CameraController(context: Context) {
 
     /** Região de ~10% do sensor em volta do ponto; o buffer 16:9 é um recorte central do sensor. */
     private fun meteringRegion(nx: Float, ny: Float): MeteringRectangle {
-        val active = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+        val active = openCharacteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
             ?: Rect(0, 0, 4000, 3000)
         val aw = active.width()
         val ah = active.height()
@@ -336,16 +362,16 @@ class CameraController(context: Context) {
         encoderThread.quitSafely()
     }
 
-    private fun hasOis() = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)
+    private fun hasOis() = openCharacteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)
         ?.contains(CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON) == true
 
-    private fun supportsEdgeOff() = characteristics.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES)
+    private fun supportsEdgeOff() = openCharacteristics.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES)
         ?.contains(CameraMetadata.EDGE_MODE_OFF) == true
 
     private fun supportsNrMinimal() =
-        characteristics.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES)
+        openCharacteristics.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES)
             ?.contains(CameraMetadata.NOISE_REDUCTION_MODE_MINIMAL) == true
 
     private fun maxCurvePoints() =
-        (characteristics.get(CameraCharacteristics.TONEMAP_MAX_CURVE_POINTS) ?: 64).coerceIn(2, 64)
+        (openCharacteristics.get(CameraCharacteristics.TONEMAP_MAX_CURVE_POINTS) ?: 64).coerceIn(2, 64)
 }

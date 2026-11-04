@@ -84,7 +84,10 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                MODES.forEach { m ->
+                br.com.plusapps.s23logvideo.camera.Lens.entries.forEach { l ->
+                    FilterChip(vm.lens == l, { vm.selectLens(l) }, enabled = canChange, label = { Text(l.label) })
+                }
+                MODES.filter { it.w <= vm.lens.maxWidth }.forEach { m ->
                     val modeCfg = cfg.withMode(m.w, m.h, m.fps)
                     FilterChip(
                         selected = cfg.width == m.w && cfg.height == m.h && cfg.fps == m.fps,
@@ -112,6 +115,7 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
                     { panel = if (panel == Panel.MONITOR) Panel.NONE else Panel.MONITOR },
                     label = { Text("⚙") },
                 )
+                FilterChip(vm.withGyro, { vm.toggleGyro() }, enabled = !vm.recording, label = { Text("Giro") })
                 TextButton(onClick = onOpenProbe, enabled = !vm.recording) { Text("Probe") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
