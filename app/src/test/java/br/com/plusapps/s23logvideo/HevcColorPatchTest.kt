@@ -38,6 +38,14 @@ class HevcColorPatchTest {
     }
 
     @Test
+    fun trocaHlgParaNaoEspecificada() {
+        val c = HevcColorPatch.readColor(HevcColorPatch.patchSps(spsS23, HevcColorPatch.TRANSFER_UNSPECIFIED))!!
+        assertEquals(2, c.transfer)
+        assertEquals(9, c.primaries)
+        assertEquals(9, c.matrix)
+    }
+
+    @Test
     fun annexBComVpsSpsPps() {
         val vps = hex("40010c01ffff")
         val pps = hex("4401c172b46240")

@@ -2,7 +2,11 @@
 
 O app grava por padrão em **Log 10 bits**: sessão HLG10 (P010, BT.2020), curva da `color/LogCurve.kt`
 aplicada pelo ISP (`TONEMAP_MODE_CONTRAST_CURVE`), HEVC Main 10 a 150 Mb/s em 4K30. O arquivo é marcado
-BT.2020 com transferência **SDR** (`bt709`), e não HLG, para o editor não aplicar tone mapping de HDR
+BT.2020 com transferência **não especificada** (`unknown`, a mesma convenção do Apple Log), e não HLG nem
+`bt709`, para o editor não aplicar tone mapping de HDR e não tratar o arquivo como Rec.709. Não existe código
+padrão para a curva do LogCam; o que declara "isto é Log" são os **metadados** gravados em cada take
+(`com.logcam.logprofile`, `com.logcam.curve`, `com.logcam.gamut`, `com.logcam.lut`), no mesmo formato do
+`com.apple.proapps.logprofile`. Takes antigos: `python tools/marcar_log.py clipe.mp4`
 em cima do Log. Em Log o app também pede `EDGE_MODE_OFF` e `NOISE_REDUCTION_MODE_MINIMAL` (quando a
 câmera anuncia esses modos), para o ISP não afiar nem alisar a imagem.
 
@@ -65,7 +69,8 @@ O CapCut pode ignorar a tag BT.2020; como a LUT faz a conversão de gamut, isso 
   - `pix_fmt=yuv420p10le`
   - `profile=Main 10`
   - `color_primaries=bt2020`
-  - `color_transfer=bt709` (**não** `arib-std-b67`)
+  - `color_transfer=unknown` (**não** `arib-std-b67` nem `bt709`) e, em `ffprobe -show_entries format_tags`,
+    as quatro chaves `com.logcam.*`; o JSON do take traz `marcadoComoLog: true`
 - [ ] Relatório em `Download/LogCam/gravacoes/*.json`: `tonemapModeDevolvido` = `CONTRAST_CURVE`.
 - [ ] Imagem **lavada** no arquivo e **normal** com a LUT (no Resolve e no CapCut).
 - [ ] Monitor 709 no preview parecido com o arquivo + LUT.

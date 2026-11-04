@@ -46,7 +46,8 @@ vermelho → reprovado no WB).
    - **Nó 2, LUT técnica** (`LogCam_to_Rec709`): botão direito → LUT.
    - **Nó 3 em diante, look**: contraste, saturação, ou a `LogCam_Look_Filme` no lugar da técnica.
 4. Se o clipe abrir escuro ou "HDR", veja em **Clip Attributes** se ele não está interpretado como
-   HLG (o app grava com a tag SDR justamente para isso não acontecer).
+   HLG (o app grava a transferência como "não especificada" e os metadados `com.logcam.*` justamente para isso
+   não acontecer).
 5. Estabilização: o `.gcsv` do mesmo take vai para o **Gyroflow** (ver `docs/fase5.md`). Exporte do
    Gyroflow em ProRes/DNxHR e só depois faça a cor, ou use o plugin OpenFX do Gyroflow no Resolve.
 

@@ -14,6 +14,9 @@ import java.io.ByteArrayOutputStream
  */
 object HevcColorPatch {
     const val TRANSFER_BT709 = 1
+
+    /** "Não especificada": é o que o Apple Log usa (BT.2020 + transferência vazia). Não há código para o Log do LogCam. */
+    const val TRANSFER_UNSPECIFIED = 2
     const val TRANSFER_HLG = 18
 
     data class Color(val primaries: Int, val transfer: Int, val matrix: Int, val transferBit: Int)

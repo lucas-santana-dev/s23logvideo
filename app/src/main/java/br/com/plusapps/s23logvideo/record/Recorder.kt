@@ -103,6 +103,8 @@ class Recorder(
         sink.endAudioAfterVideo(1_000_000L / config.fps)
         audio?.stop()
         val ok = sink.stop()
+        // Log: grava os metadados (com.logcam.logprofile...) no moov, depois do muxer e antes de publicar.
+        val logTagged = ok && config.isLog && Mp4LogTag.apply(pfd.fileDescriptor)
         video.release()
         camera.prepareNextEncoder()
         runCatching { pfd.close() }
@@ -138,7 +140,8 @@ class Recorder(
                 .put("fisica", camera.lens.physicalId ?: JSONObject.NULL)
                 .put("focalMm", camera.focalLengthMm?.toDouble() ?: JSONObject.NULL))
             .put("bitrateDoEncoder", video.bitrate)
-            .put("spsReescritoParaBt709", video.spsPatched)
+            .put("spsReescrito", video.spsPatched)
+            .put("marcadoComoLog", logTagged)
             .put("rollingShutterMs", if (maxSkewNs > 0) maxSkewNs / 1e6 else JSONObject.NULL)
             .put("giroscopio", gyro?.let { g ->
                 JSONObject().put("sensor", g.sensorName).put("amostras", g.sampleCount)

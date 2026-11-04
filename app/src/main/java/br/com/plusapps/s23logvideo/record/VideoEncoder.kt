@@ -27,9 +27,11 @@ class VideoEncoder(val config: VideoConfig, persistentSurface: Surface, handler:
 
     /**
      * Em Log, o encoder marca o bitstream como HLG (herdado da sessão HLG10) mesmo pedindo SDR no
-     * MediaFormat; o SPS é reescrito para BT.709 (ver HevcColorPatch). null = não mexer.
+     * MediaFormat; o SPS é reescrito para "transferência não especificada" (ver HevcColorPatch): nem HLG
+     * nem BT.709, porque a curva é do LogCam e não existe código para ela. O que diz "isto é Log" são os
+     * metadados do Mp4LogTag. null = não mexer.
      */
-    private val patchTransfer: Int? = if (config.isLog) HevcColorPatch.TRANSFER_BT709 else null
+    private val patchTransfer: Int? = if (config.isLog) HevcColorPatch.TRANSFER_UNSPECIFIED else null
 
     /** Se o csd-0 (SPS do contêiner) foi reescrito; vai para o relatório. */
     @Volatile var spsPatched = false
@@ -86,7 +88,7 @@ class VideoEncoder(val config: VideoConfig, persistentSurface: Surface, handler:
             override fun onOutputFormatChanged(c: MediaCodec, fmt: MediaFormat) {
                 patchTransfer?.let { t ->
                     // O MediaMuxer escreve o átomo colr do MP4 a partir destas chaves.
-                    fmt.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
+                    fmt.removeKey(MediaFormat.KEY_COLOR_TRANSFER)
                     fmt.getByteBuffer("csd-0")?.let { csd ->
                         val bytes = ByteArray(csd.remaining()).also { csd.duplicate().get(it) }
                         HevcColorPatch.patchAnnexB(bytes, t)?.let {
