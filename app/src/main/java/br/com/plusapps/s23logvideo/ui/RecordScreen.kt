@@ -211,7 +211,11 @@ private fun TopChips(vm: CameraViewModel, panel: Panel, onPanel: (Panel) -> Unit
 /** Status compacto: minutos livres, térmico (só quando importa) e o controle remoto ativo. */
 @Composable
 private fun StatusRow(vm: CameraViewModel) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+    // Rolável: em retrato o endereço do remoto não cabe ao lado dos outros chips.
+    Row(
+        Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
         vm.freeMinutes?.let { Hud("$it min", color = if (it < 5) Color(0xFFFF5252) else Color.White) }
         val st = vm.thermalStatus
         val head = vm.thermalHeadroom
@@ -264,7 +268,7 @@ private fun EyeButton(vm: CameraViewModel) {
 @Composable
 internal fun Hud(text: String, modifier: Modifier = Modifier, color: Color = Color.White) {
     Text(
-        text, color = color, fontSize = 12.sp,
+        text, color = color, fontSize = 12.sp, softWrap = text.length > 40,
         modifier = modifier.background(Color(0x99000000), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
     )
 }

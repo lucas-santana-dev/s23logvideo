@@ -241,10 +241,25 @@ private fun AudioPanel(vm: CameraViewModel) {
     }
 }
 
-/** Ajustes finos do monitoramento (Fase 4): LUT, nível da zebra, peaking. */
+/** Ajustes finos do monitoramento (Fase 4): LUT, nível da zebra, peaking. E o reset de fábrica. */
 @Composable
 private fun MonitorPanel(vm: CameraViewModel) {
     val o = vm.monitor
+    var confirmReset by remember { mutableStateOf(false) }
+    if (confirmReset) {
+        AlertDialog(
+            onDismissRequest = { confirmReset = false },
+            title = { Text("Restaurar padrão de fábrica?") },
+            text = {
+                Text(
+                    "Apaga ajustes manuais, presets salvos, opções de monitor, lente, áudio, giroscópio e " +
+                        "controle remoto (o PIN muda). Os vídeos gravados não são apagados."
+                )
+            },
+            confirmButton = { TextButton({ confirmReset = false; vm.resetToFactory() }) { Text("Restaurar") } },
+            dismissButton = { TextButton({ confirmReset = false }) { Text("Cancelar") } },
+        )
+    }
     Column(
         Modifier.background(PanelBg, RoundedCornerShape(8.dp)).padding(8.dp).widthIn(max = 600.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -275,6 +290,8 @@ private fun MonitorPanel(vm: CameraViewModel) {
                 BigButton(n, selected = o.peakingColor == c) { vm.updateMonitor(o.copy(peaking = true, peakingColor = c)) }
             }
         }
+        Text("App", color = Color.LightGray, fontSize = 11.sp)
+        BigButton("↺ Restaurar padrão de fábrica", enabled = !vm.recording) { confirmReset = true }
     }
 }
 

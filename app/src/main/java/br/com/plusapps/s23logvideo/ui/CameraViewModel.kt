@@ -657,6 +657,50 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         return JSONObject().put("ok", true)
     }
 
+    /**
+     * "Padrão de fábrica": apaga todas as preferências (ajustes, presets, monitor, lente, áudio, remoto,
+     * PIN) e volta ao estado de instalação. Não mexe nos vídeos gravados. Não roda durante um take.
+     */
+    fun resetToFactory() {
+        if (recording) {
+            notify("Pare a gravação antes de restaurar o padrão.", 6_000)
+            return
+        }
+        stopRemote()
+        if (hotspot.active) hotspot.stop()
+        hotspotInfo = null
+        focusRamp?.cancel()
+        prefs.edit().clear().commit()
+
+        settings = ManualSettings()
+        camera.settings = settings
+        presets = Preset.DEFAULTS
+        monitor = MonitorOptions()
+        withGyro = true
+        audioInput = AudioInput()
+        focusA = null
+        focusB = null
+        cleanScreen = false
+        modeBeforeDowngrade = null
+        remotePin = RemoteServer.newPin().also { prefs.edit().putString(KEY_PIN, it).apply() }
+        lutNames.firstOrNull { it.contains("Rec709") }?.let { selectLut(it) }
+        pushMonitor()
+        meter.stop()
+        if (withAudio) meter.start()
+
+        val factory = VideoConfig(3840, 2160, 30, tenBit = true, curve = true)
+        op("Restaurando o padrão…") {
+            camera.selectLens(Lens.MAIN)
+            lens = Lens.MAIN
+            config = factory
+            renderer.sensorOrientation = camera.sensorOrientation
+            pushMonitor()
+            if (camera.isOpen) camera.open(renderer.surfaceTexture.await(), factory)
+            updateFreeSpace()
+        }
+        notify("Padrão de fábrica restaurado.", 5_000)
+    }
+
     fun toggleRecording() = op(null) {
         if (recording) stopRecordingLocked() else startRecordingLocked()
     }
