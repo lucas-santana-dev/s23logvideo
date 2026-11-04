@@ -1,0 +1,252 @@
+{
+  "runTag": "20261104-000851",
+  "cameraId": "0",
+  "clipes": [
+    {
+      "spec": {
+        "name": "4K30_8bit_padrao",
+        "width": 3840,
+        "height": 2160,
+        "fps": 30,
+        "tenBit": false,
+        "curve": false
+      },
+      "cameraId": "0",
+      "fpsRangePedido": "[30, 30]",
+      "encoder": "c2.qti.hevc.encoder",
+      "bitratePedido": 100000000,
+      "formatoDeSaidaDoEncoder": "{max-bitrate=100000000, crop-right=3839, latency=4, mime=video\/hevc, profile=1, bitrate=100000000, priority=1, intra-refresh-period=0, color-standard=1, feature-secure-playback=0, color-transfer=3, crop-bottom=2159, vendor.qti-ext-enc-content-adaptive-mode.value=0, prepend-sps-pps-to-idr-frames=0, crop-left=0, width=3840, bitrate-mode=1, color-range=2, crop-top=0, frame-rate=30, height=2160, csd-0=java.nio.HeapByteBuffer[pos=0 lim=87 cap=87]}",
+      "status": "ok",
+      "arquivo": "DCIM\/LogCam\/probe\/4K30_8bit_padrao_20261104-000851.mp4",
+      "camera": {
+        "framesCapturados": 300,
+        "falhasDeCaptura": 0,
+        "quadrosPerdidos": 1,
+        "fpsMedio": 29.899760801913583,
+        "tonemapModeDevolvido": {
+          "FAST": 300
+        },
+        "quadrosComCurvaNoResult": 300,
+        "pontosDaCurvaDevolvida": 32,
+        "ultimoIso": 397,
+        "ultimaExposicaoNs": 16667400,
+        "ultimaFrameDurationNs": 33333333
+      },
+      "encoderSaida": {
+        "quadrosCodificados": 299,
+        "bytes": 125792883,
+        "bitrateRealMbps": 100.97006214765962
+      },
+      "veredito": "29,9 fps | perdidos 1 | tonemap {\"FAST\":300}"
+    },
+    {
+      "spec": {
+        "name": "4K30_8bit_curva",
+        "width": 3840,
+        "height": 2160,
+        "fps": 30,
+        "tenBit": false,
+        "curve": true
+      },
+      "cameraId": "0",
+      "fpsRangePedido": "[30, 30]",
+      "encoder": "c2.qti.hevc.encoder",
+      "bitratePedido": 100000000,
+      "pontosDaCurvaPedida": 64,
+      "formatoDeSaidaDoEncoder": "{max-bitrate=100000000, crop-right=3839, latency=4, mime=video\/hevc, profile=1, bitrate=100000000, priority=1, intra-refresh-period=0, color-standard=1, feature-secure-playback=0, color-transfer=3, crop-bottom=2159, vendor.qti-ext-enc-content-adaptive-mode.value=0, prepend-sps-pps-to-idr-frames=0, crop-left=0, width=3840, bitrate-mode=1, color-range=2, crop-top=0, frame-rate=30, height=2160, csd-0=java.nio.HeapByteBuffer[pos=0 lim=87 cap=87]}",
+      "status": "ok",
+      "arquivo": "DCIM\/LogCam\/probe\/4K30_8bit_curva_20261104-000851.mp4",
+      "camera": {
+        "framesCapturados": 299,
+        "falhasDeCaptura": 0,
+        "quadrosPerdidos": 1,
+        "fpsMedio": 29.8994263384291,
+        "tonemapModeDevolvido": {
+          "CONTRAST_CURVE": 299
+        },
+        "quadrosComCurvaNoResult": 299,
+        "pontosDaCurvaDevolvida": 64,
+        "ultimoIso": 393,
+        "ultimaExposicaoNs": 16667400,
+        "ultimaFrameDurationNs": 33333333
+      },
+      "encoderSaida": {
+        "quadrosCodificados": 298,
+        "bytes": 126916458,
+        "bitrateRealMbps": 102.21377727876613
+      },
+      "veredito": "29,9 fps | perdidos 1 | curva ACEITA"
+    },
+    {
+      "spec": {
+        "name": "4K30_10bit_padrao",
+        "width": 3840,
+        "height": 2160,
+        "fps": 30,
+        "tenBit": true,
+        "curve": false
+      },
+      "cameraId": "0",
+      "fpsRangePedido": "[30, 30]",
+      "encoder": "c2.qti.hevc.encoder",
+      "bitratePedido": 100000000,
+      "formatoDeSaidaDoEncoder": "{max-bitrate=100000000, crop-right=3839, latency=4, mime=video\/hevc, profile=2, bitrate=100000000, priority=1, intra-refresh-period=0, color-standard=6, feature-secure-playback=0, color-transfer=7, crop-bottom=2159, vendor.qti-ext-enc-content-adaptive-mode.value=0, prepend-sps-pps-to-idr-frames=0, crop-left=0, width=3840, bitrate-mode=1, color-range=2, crop-top=0, frame-rate=30, height=2160, csd-0=java.nio.HeapByteBuffer[pos=0 lim=90 cap=90]}",
+      "status": "ok",
+      "arquivo": "DCIM\/LogCam\/probe\/4K30_10bit_padrao_20261104-000851.mp4",
+      "camera": {
+        "framesCapturados": 300,
+        "falhasDeCaptura": 0,
+        "quadrosPerdidos": 1,
+        "fpsMedio": 29.899760801913583,
+        "tonemapModeDevolvido": {
+          "FAST": 300
+        },
+        "quadrosComCurvaNoResult": 300,
+        "pontosDaCurvaDevolvida": 32,
+        "ultimoIso": 398,
+        "ultimaExposicaoNs": 16667400,
+        "ultimaFrameDurationNs": 33333333
+      },
+      "encoderSaida": {
+        "quadrosCodificados": 299,
+        "bytes": 124637058,
+        "bitrateRealMbps": 100.04232715472031
+      },
+      "veredito": "29,9 fps | perdidos 1 | tonemap {\"FAST\":300}"
+    },
+    {
+      "spec": {
+        "name": "4K30_10bit_curva",
+        "width": 3840,
+        "height": 2160,
+        "fps": 30,
+        "tenBit": true,
+        "curve": true
+      },
+      "cameraId": "0",
+      "fpsRangePedido": "[30, 30]",
+      "encoder": "c2.qti.hevc.encoder",
+      "bitratePedido": 100000000,
+      "pontosDaCurvaPedida": 64,
+      "formatoDeSaidaDoEncoder": "{max-bitrate=100000000, crop-right=3839, latency=4, mime=video\/hevc, profile=2, bitrate=100000000, priority=1, intra-refresh-period=0, color-standard=6, feature-secure-playback=0, color-transfer=7, crop-bottom=2159, vendor.qti-ext-enc-content-adaptive-mode.value=0, prepend-sps-pps-to-idr-frames=0, crop-left=0, width=3840, bitrate-mode=1, color-range=2, crop-top=0, frame-rate=30, height=2160, csd-0=java.nio.HeapByteBuffer[pos=0 lim=90 cap=90]}",
+      "status": "ok",
+      "arquivo": "DCIM\/LogCam\/probe\/4K30_10bit_curva_20261104-000851.mp4",
+      "camera": {
+        "framesCapturados": 299,
+        "falhasDeCaptura": 0,
+        "quadrosPerdidos": 1,
+        "fpsMedio": 29.899426491424943,
+        "tonemapModeDevolvido": {
+          "CONTRAST_CURVE": 299
+        },
+        "quadrosComCurvaNoResult": 299,
+        "pontosDaCurvaDevolvida": 64,
+        "ultimoIso": 396,
+        "ultimaExposicaoNs": 16667400,
+        "ultimaFrameDurationNs": 33333333
+      },
+      "encoderSaida": {
+        "quadrosCodificados": 298,
+        "bytes": 123367461,
+        "bitrateRealMbps": 99.35555758685938
+      },
+      "veredito": "29,9 fps | perdidos 1 | curva ACEITA"
+    },
+    {
+      "spec": {
+        "name": "4K60_8bit_padrao",
+        "width": 3840,
+        "height": 2160,
+        "fps": 60,
+        "tenBit": false,
+        "curve": false
+      },
+      "status": "pulado",
+      "motivo": "câmera limita 3840x2160 a 30 fps"
+    },
+    {
+      "spec": {
+        "name": "4K60_8bit_curva",
+        "width": 3840,
+        "height": 2160,
+        "fps": 60,
+        "tenBit": false,
+        "curve": true
+      },
+      "status": "pulado",
+      "motivo": "câmera limita 3840x2160 a 30 fps"
+    },
+    {
+      "spec": {
+        "name": "4K60_10bit_padrao",
+        "width": 3840,
+        "height": 2160,
+        "fps": 60,
+        "tenBit": true,
+        "curve": false
+      },
+      "status": "pulado",
+      "motivo": "câmera limita 3840x2160 a 30 fps"
+    },
+    {
+      "spec": {
+        "name": "4K60_10bit_curva",
+        "width": 3840,
+        "height": 2160,
+        "fps": 60,
+        "tenBit": true,
+        "curve": true
+      },
+      "status": "pulado",
+      "motivo": "câmera limita 3840x2160 a 30 fps"
+    },
+    {
+      "spec": {
+        "name": "8K30_8bit_padrao",
+        "width": 7680,
+        "height": 4320,
+        "fps": 30,
+        "tenBit": false,
+        "curve": false
+      },
+      "status": "pulado",
+      "motivo": "câmera não oferece 7680x4320 para MediaCodec"
+    },
+    {
+      "spec": {
+        "name": "8K30_8bit_curva",
+        "width": 7680,
+        "height": 4320,
+        "fps": 30,
+        "tenBit": false,
+        "curve": true
+      },
+      "status": "pulado",
+      "motivo": "câmera não oferece 7680x4320 para MediaCodec"
+    },
+    {
+      "spec": {
+        "name": "8K30_10bit_padrao",
+        "width": 7680,
+        "height": 4320,
+        "fps": 30,
+        "tenBit": true,
+        "curve": false
+      },
+      "status": "pulado",
+      "motivo": "câmera não oferece 7680x4320 para MediaCodec"
+    },
+    {
+      "spec": {
+        "name": "8K30_10bit_curva",
+        "width": 7680,
+        "height": 4320,
+        "fps": 30,
+        "tenBit": true,
+        "curve": true
+      },
+      "status": "pulado",
+      "motivo": "câmera não oferece 7680x4320 para MediaCodec"
+    }
+  ]
+}

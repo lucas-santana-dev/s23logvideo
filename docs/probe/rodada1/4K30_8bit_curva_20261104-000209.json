@@ -1,0 +1,38 @@
+{
+  "spec": {
+    "name": "4K30_8bit_curva",
+    "width": 3840,
+    "height": 2160,
+    "fps": 30,
+    "tenBit": false,
+    "curve": true
+  },
+  "cameraId": "0",
+  "fpsRangePedido": "[30, 30]",
+  "encoder": "c2.qti.hevc.encoder",
+  "bitratePedido": 100000000,
+  "pontosDaCurvaPedida": 64,
+  "formatoDeSaidaDoEncoder": "{max-bitrate=100000000, crop-right=3839, latency=4, mime=video\/hevc, profile=1, bitrate=100000000, priority=1, intra-refresh-period=0, color-standard=1, feature-secure-playback=0, color-transfer=3, crop-bottom=2159, vendor.qti-ext-enc-content-adaptive-mode.value=0, prepend-sps-pps-to-idr-frames=0, crop-left=0, width=3840, bitrate-mode=1, color-range=2, crop-top=0, frame-rate=30, height=2160, csd-0=java.nio.HeapByteBuffer[pos=0 lim=87 cap=87]}",
+  "status": "ok",
+  "arquivo": "DCIM\/LogCam\/probe\/4K30_8bit_curva_20261104-000209.mp4",
+  "camera": {
+    "framesCapturados": 299,
+    "falhasDeCaptura": 0,
+    "quadrosPerdidos": 1,
+    "fpsMedio": 29.910953266353452,
+    "tonemapModeDevolvido": {
+      "CONTRAST_CURVE": 299
+    },
+    "quadrosComCurvaNoResult": 299,
+    "pontosDaCurvaDevolvida": 64,
+    "ultimoIso": 11865,
+    "ultimaExposicaoNs": 33333333,
+    "ultimaFrameDurationNs": 33435932
+  },
+  "encoderSaida": {
+    "quadrosCodificados": 298,
+    "bytes": 68312923,
+    "bitrateRealMbps": 55.0385306606023
+  },
+  "veredito": "29,9 fps | perdidos 1 | curva ACEITA"
+}
