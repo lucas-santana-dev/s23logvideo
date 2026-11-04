@@ -31,6 +31,10 @@ class AudioEncoder(private val sink: MuxerSink) {
     @Volatile
     private var running = false
 
+    /** Pico do último bloco lido (0..1), para o VU do HUD. */
+    @Volatile var peak = 0f
+        private set
+
     private var framesRead = 0L
     private var timestampFallbacks = 0
     private var error: Throwable? = null
@@ -104,6 +108,7 @@ class AudioEncoder(private val sink: MuxerSink) {
                     val want = buf.capacity() - buf.capacity() % BYTES_PER_FRAME
                     val n = record.read(buf, want)
                     if (n > 0) {
+                        peak = br.com.plusapps.s23logvideo.audio.pcm16Peak(buf, n)
                         // Atualiza a referência de tempo a cada ~1 s (corrige deriva entre os relógios).
                         val now = System.nanoTime()
                         if (refFrame < 0 || now - lastRefresh > 1_000_000_000L) {

@@ -40,7 +40,7 @@ import br.com.plusapps.s23logvideo.camera.ManualSettings
 import br.com.plusapps.s23logvideo.camera.WbMode
 
 /** Qual roda está aberta acima da barra. */
-enum class Panel { NONE, EXPOSURE, ISO, SHUTTER, WB, FOCUS, PRESETS }
+enum class Panel { NONE, EXPOSURE, ISO, SHUTTER, WB, FOCUS, PRESETS, MONITOR }
 
 private val Accent = Color(0xFFFFC107)
 private val PanelBg = Color(0xCC000000)
@@ -88,6 +88,7 @@ fun ManualControls(vm: CameraViewModel, panel: Panel, onPanel: (Panel) -> Unit, 
 
             Panel.FOCUS -> FocusPanel(vm)
             Panel.PRESETS -> PresetsPanel(vm)
+            Panel.MONITOR -> MonitorPanel(vm)
             Panel.NONE -> Unit
         }
 
@@ -147,6 +148,43 @@ private fun FocusPanel(vm: CameraViewModel) {
             vm.focusB?.let { b -> BigButton("→ B ${distanceLabel(b)}") { vm.pullFocusTo(b) } }
         }
         Text("Toque na imagem para focar num ponto (o foco trava ali).", color = Color.LightGray, fontSize = 11.sp)
+    }
+}
+
+/** Ajustes finos do monitoramento (Fase 4): LUT, nível da zebra, peaking. */
+@Composable
+private fun MonitorPanel(vm: CameraViewModel) {
+    val o = vm.monitor
+    Column(
+        Modifier.background(PanelBg, RoundedCornerShape(8.dp)).padding(8.dp).widthIn(max = 600.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (vm.lutNames.isNotEmpty()) {
+            Text("LUT na tela (só com Log)", color = Color.LightGray, fontSize = 11.sp)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                itemsIndexed(vm.lutNames) { _, n ->
+                    BigButton(n.removeSuffix(".cube"), selected = n == vm.lutName) { vm.selectLut(n) }
+                }
+            }
+        }
+        Text("Zebra acima de (sinal gravado)", color = Color.LightGray, fontSize = 11.sp)
+        Wheel((70..100 step 5).toList(), Math.round(o.zebraLevel * 100), { "$it%" }) {
+            vm.updateMonitor(o.copy(zebra = true, zebraLevel = it / 100f))
+        }
+        Text("Peaking", color = Color.LightGray, fontSize = 11.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(0.20f to "baixo", 0.12f to "médio", 0.07f to "alto").forEach { (t, n) ->
+                BigButton(n, selected = o.peakingThreshold == t) {
+                    vm.updateMonitor(o.copy(peaking = true, peakingThreshold = t))
+                }
+            }
+            listOf(
+                0xFFFF1744.toInt() to "vermelho", 0xFF00E676.toInt() to "verde",
+                0xFF2979FF.toInt() to "azul", 0xFFFFFFFF.toInt() to "branco",
+            ).forEach { (c, n) ->
+                BigButton(n, selected = o.peakingColor == c) { vm.updateMonitor(o.copy(peaking = true, peakingColor = c)) }
+            }
+        }
     }
 }
 

@@ -53,6 +53,7 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
     }
 
     var panel by rememberSaveable { mutableStateOf(Panel.NONE) }
+    val cfg = vm.config
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
@@ -77,7 +78,6 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
 
         // Topo: modo, espaço livre, status
         Column(Modifier.align(Alignment.TopStart).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            val cfg = vm.config
             val canChange = !vm.recording && !vm.busy
             Row(
                 Modifier.horizontalScroll(rememberScrollState()),
@@ -99,15 +99,28 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
                     enabled = canChange,
                     label = { Text("LOG 10-bit") },
                 )
+                val mo = vm.monitor
                 if (cfg.isLog) {
-                    FilterChip(
-                        selected = vm.monitor709,
-                        onClick = { vm.toggleMonitor709() },
-                        enabled = !vm.recording,
-                        label = { Text("Monitor 709") },
-                    )
+                    FilterChip(mo.lut, { vm.updateMonitor(mo.copy(lut = !mo.lut)) }, label = { Text("LUT 709") })
                 }
+                FilterChip(mo.falseColor, { vm.updateMonitor(mo.copy(falseColor = !mo.falseColor)) }, label = { Text("False color") })
+                FilterChip(mo.zebra, { vm.updateMonitor(mo.copy(zebra = !mo.zebra)) }, label = { Text("Zebra") })
+                FilterChip(mo.peaking, { vm.updateMonitor(mo.copy(peaking = !mo.peaking)) }, label = { Text("Peaking") })
+                FilterChip(mo.scopes, { vm.updateMonitor(mo.copy(scopes = !mo.scopes)) }, label = { Text("Scopes") })
+                FilterChip(
+                    panel == Panel.MONITOR,
+                    { panel = if (panel == Panel.MONITOR) Panel.NONE else Panel.MONITOR },
+                    label = { Text("⚙") },
+                )
+                TextButton(onClick = onOpenProbe, enabled = !vm.recording) { Text("Probe") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 vm.freeMinutes?.let { Hud("livre ≈ $it min") }
+                thermalLabel(vm.thermalStatus)?.let { Hud(it) }
+                vm.thermalHeadroom?.let { if (it >= 0.7f) Hud("aquecendo: %.0f%%".format(it * 100)) }
+                if (vm.monitor.falseColor) {
+                    Hud("verde = cinza 18% · rosa = pele · amarelo = alto · vermelho = estouro · azul/roxo = sombra")
+                }
             }
             if (vm.status.isNotEmpty()) Hud(vm.status)
             vm.lastResult?.let { Hud(it) }
@@ -127,9 +140,7 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
             modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 12.dp, end = 140.dp),
         )
 
-        TextButton(onClick = onOpenProbe, enabled = !vm.recording, modifier = Modifier.align(Alignment.BottomEnd)) {
-            Text("Probe")
-        }
+        vm.scopes?.let { ScopesView(it, cfg.isLog, Modifier.align(Alignment.TopEnd).padding(top = 110.dp, end = 140.dp)) }
 
         // Lateral direita: cronômetro e botão de gravar
         Column(
@@ -143,6 +154,7 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
                 fontFamily = FontFamily.Monospace, fontSize = 18.sp, fontWeight = FontWeight.Bold,
             )
             if (vm.recording) Hud("perdidos ${vm.droppedFrames}")
+            if (vm.withAudio) AudioVu(vm.audioDb, vm.audioClipped, Modifier.padding(top = 8.dp))
             Box(
                 Modifier.padding(top = 12.dp).size(76.dp).border(4.dp, Color.White, CircleShape)
                     .padding(8.dp).clip(if (vm.recording) RoundedCornerShape(8.dp) else CircleShape)

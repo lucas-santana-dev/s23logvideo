@@ -39,6 +39,7 @@ class Recorder(
     private var settingsAtStart: JSONObject = JSONObject()
 
     val droppedFrames get() = stats.droppedFrames
+    val audioPeak get() = audio?.peak ?: 0f
     val elapsedMs get() = if (startNanos == 0L) 0L else (System.nanoTime() - startNanos) / 1_000_000
 
     fun start(orientationHint: Int) {

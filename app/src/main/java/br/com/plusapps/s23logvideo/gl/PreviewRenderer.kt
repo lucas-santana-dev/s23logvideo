@@ -9,6 +9,7 @@ import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
+import android.opengl.GLES30
 import android.opengl.Matrix
 import android.os.Handler
 import android.os.HandlerThread
@@ -19,11 +20,35 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 
+/** Opções de monitoramento (Fase 4). Tudo só na tela: o arquivo gravado nunca passa por aqui. */
+data class MonitorOptions(
+    /** Aplica a LUT carregada em [PreviewRenderer.setLut] (Log → Rec.709 ou um look). */
+    val lut: Boolean = false,
+    val falseColor: Boolean = false,
+    val zebra: Boolean = false,
+    /** Limite da zebra, em fração do sinal gravado (0..1). */
+    val zebraLevel: Float = 0.90f,
+    val peaking: Boolean = false,
+    /** Sensibilidade do peaking: limite do gradiente (menor = mais bordas). */
+    val peakingThreshold: Float = 0.12f,
+    val peakingColor: Int = 0xFFFF1744.toInt(),
+    val scopes: Boolean = false,
+    /** A imagem está em Log (false color e decodificação usam a LogCurve) ou em Rec.709. */
+    val isLog: Boolean = true,
+)
+
+/** Histograma (64 classes) e waveform (128 colunas × 64 níveis) do sinal gravado, de um quadro reduzido. */
+class Scopes(val histogram: IntArray, val waveform: IntArray) {
+    companion object {
+        const val BINS = 64
+        const val COLS = 128
+        const val ROWS = 72
+    }
+}
+
 /**
- * Preview em OpenGL: a câmera escreve numa SurfaceTexture (textura OES), e esta classe
- * desenha num SurfaceView com aspect-fit e rotação. Na Fase 4 é aqui que entram LUT,
- * false color, zebra e peaking. Na Fase 2 o shader pode converter Log → Rec.709 só para a tela
- * ([monitor709]); o arquivo gravado continua em Log.
+ * Preview em OpenGL ES 3: a câmera escreve numa SurfaceTexture (textura OES), e esta classe
+ * desenha num SurfaceView com aspect-fit e rotação, aplicando as ferramentas de monitoramento.
  */
 class PreviewRenderer {
     private val thread = HandlerThread("gl").apply { start() }
@@ -38,17 +63,26 @@ class PreviewRenderer {
     private var viewH = 0
 
     private var program = 0
+    private var scopeProgram = 0
     private var texId = 0
+    private var lutTex = 0
+    private var lutSize = 0
+    private var scopeFbo = 0
+    private var scopeTex = 0
+    private val scopePixels: ByteBuffer =
+        ByteBuffer.allocateDirect(Scopes.COLS * Scopes.ROWS * 4).order(ByteOrder.nativeOrder())
+    private var frameCount = 0L
     private lateinit var texture: SurfaceTexture
     private val texMatrix = FloatArray(16)
     private val mvp = FloatArray(16)
+    private val rotOnly = FloatArray(16)
 
     // Geometria do último quadro desenhado, para converter um toque na tela em coordenadas do buffer.
     @Volatile private var lastGeom: Geom? = null
 
     private class Geom(val tex: FloatArray, val sx: Float, val sy: Float, val rot: Int, val w: Int, val h: Int)
 
-    /** Tamanho do buffer da câmera (para o aspect-fit). */
+    /** Tamanho do buffer da câmera (para o aspect-fit e o peaking). */
     @Volatile var inputWidth = 1920
     @Volatile var inputHeight = 1080
 
@@ -58,11 +92,15 @@ class PreviewRenderer {
     /** SENSOR_ORIENTATION da câmera em uso. */
     @Volatile var sensorOrientation = 90
 
-    /**
-     * Monitoramento Log → Rec.709 no preview (só a tela; o arquivo continua em Log).
-     * Mesma conversão de `tools/make_lut.py`. Só faz sentido com a imagem em Log.
-     */
-    @Volatile var monitor709 = false
+    @Volatile var options = MonitorOptions()
+
+    /** Último histograma/waveform (só com [MonitorOptions.scopes] ligado). */
+    @Volatile var scopes: Scopes? = null
+        private set
+
+    /** Nome da LUT carregada (null = nenhuma). */
+    @Volatile var lutName: String? = null
+        private set
 
     val surfaceTexture = CompletableDeferred<SurfaceTexture>()
 
@@ -73,6 +111,7 @@ class PreviewRenderer {
         handler.post {
             initEgl()
             program = buildProgram(VERTEX, FRAGMENT)
+            scopeProgram = buildProgram(VERTEX, SCOPE_FRAGMENT)
             val ids = IntArray(1)
             GLES20.glGenTextures(1, ids, 0)
             texId = ids[0]
@@ -81,9 +120,40 @@ class PreviewRenderer {
             GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
             GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
             GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+            initScopeTarget()
             texture = SurfaceTexture(texId)
             texture.setOnFrameAvailableListener({ draw() }, handler)
             surfaceTexture.complete(texture)
+        }
+    }
+
+    /**
+     * Carrega uma LUT .cube (texto) como textura 3D. Lança erro se o arquivo for inválido.
+     * Chamar fora da thread de GL; o upload é feito nela.
+     */
+    fun setLut(name: String, cubeText: String) {
+        val cube = CubeLut.parse(cubeText)
+        handler.post {
+            if (lutTex == 0) {
+                val ids = IntArray(1)
+                GLES30.glGenTextures(1, ids, 0)
+                lutTex = ids[0]
+            }
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTex)
+            for (p in intArrayOf(GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_TEXTURE_WRAP_R)) {
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, p, GLES30.GL_CLAMP_TO_EDGE)
+            }
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+            val buf = ByteBuffer.allocateDirect(cube.data.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+            buf.put(cube.data).position(0)
+            // .cube: R varia mais rápido, depois G, depois B = x, y, z de uma textura 3D.
+            GLES30.glTexImage3D(
+                GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGB16F, cube.size, cube.size, cube.size, 0,
+                GLES30.GL_RGB, GLES30.GL_FLOAT, buf,
+            )
+            lutSize = cube.size
+            lutName = name
         }
     }
 
@@ -147,6 +217,7 @@ class PreviewRenderer {
         EGL14.eglMakeCurrent(display, window, window, context)
         texture.updateTexImage()
         texture.getTransformMatrix(texMatrix)
+        val o = options
 
         // A Camera2 costuma pôr a rotação do sensor na própria matriz da SurfaceTexture (a imagem já
         // chega "em pé" na orientação natural, retrato). Se a matriz troca os eixos, é esse o caso:
@@ -165,29 +236,103 @@ class PreviewRenderer {
         Matrix.rotateM(mvp, 0, rot.toFloat(), 0f, 0f, 1f)
         lastGeom = Geom(texMatrix.copyOf(), sx, sy, rot, viewW, viewH)
 
+        // Scopes: a cada 4 quadros, o sinal cru num quadro de 128x72, lido de volta para a CPU.
+        if (o.scopes && frameCount++ % 4 == 0L) {
+            Matrix.setIdentityM(rotOnly, 0)
+            Matrix.rotateM(rotOnly, 0, rot.toFloat(), 0f, 0f, 1f)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, scopeFbo)
+            GLES20.glViewport(0, 0, Scopes.COLS, Scopes.ROWS)
+            GLES20.glUseProgram(scopeProgram)
+            bindCommon(scopeProgram, rotOnly)
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+            scopePixels.position(0)
+            GLES20.glReadPixels(0, 0, Scopes.COLS, Scopes.ROWS, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, scopePixels)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            scopes = computeScopes(scopePixels)
+        } else if (!o.scopes) {
+            scopes = null
+        }
+
         GLES20.glViewport(0, 0, viewW, viewH)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         GLES20.glUseProgram(program)
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, texId)
-        GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(program, "uMvp"), 1, false, mvp, 0)
-        GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(program, "uTex"), 1, false, texMatrix, 0)
-        GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uImage"), 0)
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uLogA"), LogCurve.a.toFloat())
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uLogC"), LogCurve.c.toFloat())
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uLogD"), LogCurve.d.toFloat())
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uToRec709"), if (monitor709) 1f else 0f)
-        val aPos = GLES20.glGetAttribLocation(program, "aPos")
-        val aUv = GLES20.glGetAttribLocation(program, "aUv")
-        GLES20.glEnableVertexAttribArray(aPos)
-        GLES20.glVertexAttribPointer(aPos, 2, GLES20.GL_FLOAT, false, 0, quad)
-        GLES20.glEnableVertexAttribArray(aUv)
-        GLES20.glVertexAttribPointer(aUv, 2, GLES20.GL_FLOAT, false, 0, uv)
+        bindCommon(program, mvp)
+        val lutOn = o.lut && lutTex != 0
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTex)
+        u1i(program, "uLut", 1)
+        u1f(program, "uLutOn", if (lutOn) 1f else 0f)
+        u1f(program, "uLutSize", lutSize.coerceAtLeast(2).toFloat())
+        u1f(program, "uIsLog", if (o.isLog) 1f else 0f)
+        u1f(program, "uLogA", LogCurve.a.toFloat())
+        u1f(program, "uLogC", LogCurve.c.toFloat())
+        u1f(program, "uLogD", LogCurve.d.toFloat())
+        u1f(program, "uFalseColor", if (o.falseColor) 1f else 0f)
+        u1f(program, "uZebra", if (o.zebra) 1f else 0f)
+        u1f(program, "uZebraLevel", o.zebraLevel)
+        u1f(program, "uPeaking", if (o.peaking) 1f else 0f)
+        u1f(program, "uPeakThresh", o.peakingThreshold)
+        val pc = o.peakingColor
+        GLES20.glUniform3f(
+            GLES20.glGetUniformLocation(program, "uPeakColor"),
+            (pc shr 16 and 0xFF) / 255f, (pc shr 8 and 0xFF) / 255f, (pc and 0xFF) / 255f,
+        )
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(program, "uTexel"), 1f / inputWidth, 1f / inputHeight)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         EGLExt.eglPresentationTimeANDROID(display, window, texture.timestamp)
         EGL14.eglSwapBuffers(display, window)
     }
+
+    private fun bindCommon(p: Int, matrix: FloatArray) {
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, texId)
+        GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(p, "uMvp"), 1, false, matrix, 0)
+        GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(p, "uTex"), 1, false, texMatrix, 0)
+        u1i(p, "uImage", 0)
+        val aPos = GLES20.glGetAttribLocation(p, "aPos")
+        val aUv = GLES20.glGetAttribLocation(p, "aUv")
+        GLES20.glEnableVertexAttribArray(aPos)
+        GLES20.glVertexAttribPointer(aPos, 2, GLES20.GL_FLOAT, false, 0, quad)
+        GLES20.glEnableVertexAttribArray(aUv)
+        GLES20.glVertexAttribPointer(aUv, 2, GLES20.GL_FLOAT, false, 0, uv)
+    }
+
+    private fun computeScopes(px: ByteBuffer): Scopes {
+        val hist = IntArray(Scopes.BINS)
+        val wave = IntArray(Scopes.COLS * Scopes.BINS)
+        // O shader de scope já escreve a luma no canal R.
+        for (row in 0 until Scopes.ROWS) {
+            for (col in 0 until Scopes.COLS) {
+                val y = px.get((row * Scopes.COLS + col) * 4).toInt() and 0xFF
+                val bin = y * Scopes.BINS / 256
+                hist[bin]++
+                wave[col * Scopes.BINS + bin]++
+            }
+        }
+        return Scopes(hist, wave)
+    }
+
+    private fun initScopeTarget() {
+        val ids = IntArray(1)
+        GLES20.glGenTextures(1, ids, 0)
+        scopeTex = ids[0]
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, scopeTex)
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, Scopes.COLS, Scopes.ROWS, 0,
+            GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null,
+        )
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
+        GLES20.glGenFramebuffers(1, ids, 0)
+        scopeFbo = ids[0]
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, scopeFbo)
+        GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, scopeTex, 0)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+    }
+
+    private fun u1f(p: Int, name: String, v: Float) = GLES20.glUniform1f(GLES20.glGetUniformLocation(p, name), v)
+    private fun u1i(p: Int, name: String, v: Int) = GLES20.glUniform1i(GLES20.glGetUniformLocation(p, name), v)
 
     private fun initEgl() {
         display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
@@ -215,7 +360,7 @@ class PreviewRenderer {
     private fun buildProgram(vs: String, fs: String): Int {
         fun compile(type: Int, src: String): Int {
             val s = GLES20.glCreateShader(type)
-            GLES20.glShaderSource(s, src)
+            GLES20.glShaderSource(s, src.trimIndent())
             GLES20.glCompileShader(s)
             val ok = IntArray(1)
             GLES20.glGetShaderiv(s, GLES20.GL_COMPILE_STATUS, ok, 0)
@@ -226,6 +371,9 @@ class PreviewRenderer {
         GLES20.glAttachShader(p, compile(GLES20.GL_VERTEX_SHADER, vs))
         GLES20.glAttachShader(p, compile(GLES20.GL_FRAGMENT_SHADER, fs))
         GLES20.glLinkProgram(p)
+        val ok = IntArray(1)
+        GLES20.glGetProgramiv(p, GLES20.GL_LINK_STATUS, ok, 0)
+        check(ok[0] != 0) { "link: " + GLES20.glGetProgramInfoLog(p) }
         return p
     }
 
@@ -233,53 +381,112 @@ class PreviewRenderer {
         ByteBuffer.allocateDirect(size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply { put(this@toBuffer); position(0) }
 
     companion object {
+        // #version precisa ser a 1ª linha: os shaders passam por trimIndent().
         private const val VERTEX = """
+            #version 300 es
             uniform mat4 uMvp;
             uniform mat4 uTex;
-            attribute vec4 aPos;
-            attribute vec4 aUv;
-            varying vec2 vUv;
+            in vec4 aPos;
+            in vec4 aUv;
+            out vec2 vUv;
             void main() {
                 gl_Position = uMvp * aPos;
                 vUv = (uTex * aUv).xy;
             }
         """
-        private const val FRAGMENT = """
-            #extension GL_OES_EGL_image_external : require
-            precision highp float;
+
+        /** Sinal cru → luma no canal R (para histograma/waveform). */
+        private const val SCOPE_FRAGMENT = """
+            #version 300 es
+            #extension GL_OES_EGL_image_external_essl3 : require
+            precision mediump float;
             uniform samplerExternalOES uImage;
+            in vec2 vUv;
+            out vec4 outColor;
+            void main() {
+                vec3 c = texture(uImage, vUv).rgb;
+                float y = dot(c, vec3(0.2627, 0.6780, 0.0593));
+                outColor = vec4(y, y, y, 1.0);
+            }
+        """
+
+        private const val FRAGMENT = """
+            #version 300 es
+            #extension GL_OES_EGL_image_external_essl3 : require
+            precision highp float;
+            precision mediump sampler3D;
+            uniform samplerExternalOES uImage;
+            uniform sampler3D uLut;
+            uniform float uLutOn;
+            uniform float uLutSize;
+            uniform float uIsLog;
             uniform float uLogA;
             uniform float uLogC;
             uniform float uLogD;
-            uniform float uToRec709;
-            varying vec2 vUv;
+            uniform float uFalseColor;
+            uniform float uZebra;
+            uniform float uZebraLevel;
+            uniform float uPeaking;
+            uniform float uPeakThresh;
+            uniform vec3 uPeakColor;
+            uniform vec2 uTexel;
+            in vec2 vUv;
+            out vec4 outColor;
 
-            // BT.2020 -> BT.709 em luz linear. GLSL monta mat3 por colunas: estas são as
-            // COLUNAS da matriz de linhas [1.6605,-0.5876,-0.0728; -0.1246,1.1329,-0.0083; -0.0182,-0.1006,1.1187].
-            const mat3 BT2020_TO_709 = mat3(
-                1.6605, -0.1246, -0.0182,
-                -0.5876, 1.1329, -0.1006,
-                -0.0728, -0.0083, 1.1187
-            );
+            // Luma com os pesos BT.2020 (o Log e gravado em BT.2020); em Rec.709 a diferenca e pequena.
+            float luma(vec3 c) { return dot(c, vec3(0.2627, 0.6780, 0.0593)); }
 
-            float rolloff(float x) {
-                return x > 0.8 ? 0.8 + 0.2 * (1.0 - exp(-(x - 0.8) / 0.2)) : x;
+            vec3 applyLut(vec3 c) {
+                vec3 s = (clamp(c, 0.0, 1.0) * (uLutSize - 1.0) + 0.5) / uLutSize;
+                return texture(uLut, s).rgb;
             }
 
-            float oetf709(float x) {
-                return x < 0.018 ? 4.5 * x : 1.099 * pow(x, 0.45) - 0.099;
+            // Sinal gravado -> luz linear da cena (0..1). Log: inversa da LogCurve. Normal: inversa da 709.
+            float sceneLinear(float y) {
+                if (uIsLog > 0.5) return pow(10.0, (y - uLogD) / uLogA) - uLogC;
+                return y < 0.081 ? y / 4.5 : pow((y + 0.099) / 1.099, 1.0 / 0.45);
+            }
+
+            // Faixas em stops em relacao ao cinza 18%, no estilo das cameras de cinema.
+            vec3 falseColor(float y, float shown) {
+                float lin = sceneLinear(y);
+                float st = log2(max(lin, 1e-5) / 0.18);
+                if (lin >= 0.95) return vec3(1.0, 0.0, 0.0);              // estourado
+                if (st >= 2.0) return vec3(1.0, 0.9, 0.0);                // realce perto do limite
+                if (st >= 0.6 && st <= 1.3) return vec3(1.0, 0.5, 0.75);  // pele clara (~+1 stop)
+                if (abs(st) <= 0.25) return vec3(0.1, 0.85, 0.2);         // cinza medio
+                if (st <= -6.0) return vec3(0.55, 0.0, 0.75);             // preto / ruido
+                if (st <= -4.0) return vec3(0.1, 0.35, 1.0);              // sombra profunda
+                return vec3(shown * 0.85);
             }
 
             void main() {
-                vec4 c = texture2D(uImage, vUv);
-                if (uToRec709 > 0.5) {
-                    // Inversa da LogCurve: y = a*log10(x + c) + d  ->  x = 10^((y - d)/a) - c
-                    vec3 lin = pow(vec3(10.0), (c.rgb - vec3(uLogD)) / uLogA) - vec3(uLogC);
-                    lin = max(BT2020_TO_709 * lin, vec3(0.0));
-                    lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));
-                    c.rgb = vec3(oetf709(lin.r), oetf709(lin.g), oetf709(lin.b));
+                vec3 raw = texture(uImage, vUv).rgb;
+                float y = luma(raw);
+                vec3 shown = uLutOn > 0.5 ? applyLut(raw) : raw;
+                vec3 c = shown;
+                if (uFalseColor > 0.5) {
+                    c = falseColor(y, luma(shown));
+                } else if (uZebra > 0.5 && y >= uZebraLevel) {
+                    // Listras diagonais sobre o que passa do limite.
+                    float band = mod(gl_FragCoord.x + gl_FragCoord.y, 14.0);
+                    if (band < 7.0) c = mix(c, vec3(1.0), 0.75); else c = mix(c, vec3(0.0), 0.6);
                 }
-                gl_FragColor = c;
+                if (uPeaking > 0.5) {
+                    // Sobel na luma do sinal cru.
+                    float tl = luma(texture(uImage, vUv + uTexel * vec2(-1.0, -1.0)).rgb);
+                    float t  = luma(texture(uImage, vUv + uTexel * vec2( 0.0, -1.0)).rgb);
+                    float tr = luma(texture(uImage, vUv + uTexel * vec2( 1.0, -1.0)).rgb);
+                    float l  = luma(texture(uImage, vUv + uTexel * vec2(-1.0,  0.0)).rgb);
+                    float r  = luma(texture(uImage, vUv + uTexel * vec2( 1.0,  0.0)).rgb);
+                    float bl = luma(texture(uImage, vUv + uTexel * vec2(-1.0,  1.0)).rgb);
+                    float b  = luma(texture(uImage, vUv + uTexel * vec2( 0.0,  1.0)).rgb);
+                    float br = luma(texture(uImage, vUv + uTexel * vec2( 1.0,  1.0)).rgb);
+                    float gx = (tr + 2.0 * r + br) - (tl + 2.0 * l + bl);
+                    float gy = (bl + 2.0 * b + br) - (tl + 2.0 * t + tr);
+                    if (length(vec2(gx, gy)) > uPeakThresh) c = uPeakColor;
+                }
+                outColor = vec4(c, 1.0);
             }
         """
     }

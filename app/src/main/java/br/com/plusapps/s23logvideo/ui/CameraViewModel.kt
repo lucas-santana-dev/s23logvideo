@@ -2,7 +2,12 @@ package br.com.plusapps.s23logvideo.ui
 
 import android.app.Application
 import android.content.Context
+import android.os.PowerManager
 import android.os.StatFs
+import br.com.plusapps.s23logvideo.audio.AudioMeter
+import br.com.plusapps.s23logvideo.audio.toDbfs
+import br.com.plusapps.s23logvideo.gl.MonitorOptions
+import br.com.plusapps.s23logvideo.gl.Scopes
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -46,9 +51,27 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
     var config by mutableStateOf(VideoConfig(3840, 2160, 30, tenBit = true, curve = true))
         private set
 
-    /** Preferência do usuário pelo monitor Rec.709; só tem efeito com a imagem em Log. */
-    var monitor709 by mutableStateOf(false)
+    // ---- Fase 4: monitoramento (só a tela) ----
+    var monitor by mutableStateOf(MonitorOptions())
         private set
+    /** LUTs disponíveis (assets, vindas de luts/). */
+    val lutNames: List<String> = runCatching { app.assets.list("").orEmpty().filter { it.endsWith(".cube") }.sorted() }
+        .getOrDefault(emptyList())
+    var lutName by mutableStateOf<String?>(null)
+        private set
+    var scopes by mutableStateOf<Scopes?>(null)
+        private set
+    /** Pico de áudio em dBFS (com retenção de pico) e o maior pico do take. */
+    var audioDb by mutableStateOf(-100f)
+        private set
+    var audioClipped by mutableStateOf(false)
+        private set
+    var thermalStatus by mutableIntStateOf(0)
+        private set
+    var thermalHeadroom by mutableStateOf<Float?>(null)
+        private set
+    private val power = app.getSystemService(PowerManager::class.java)
+    private val meter = AudioMeter { AudioMeter.defaultRecord() }
     var recording by mutableStateOf(false)
         private set
     var busy by mutableStateOf(false)
@@ -122,10 +145,16 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
 
     init {
         camera.settings = settings
+        monitor = loadMonitor()
+        val wanted = prefs.getString(KEY_LUT, null)?.takeIf { it in lutNames }
+            ?: lutNames.firstOrNull { it.contains("Rec709") } ?: lutNames.firstOrNull()
+        wanted?.let { selectLut(it) }
+        pushMonitor()
     }
 
     fun onStart() = op("Abrindo câmera…") {
         startHudLoop()
+        if (withAudio) meter.start()
         if (!camera.isOpen) {
             renderer.sensorOrientation = camera.sensorOrientation
             camera.open(renderer.surfaceTexture.await(), config)
@@ -136,6 +165,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
     fun onStop() = op(null) {
         hudLoop?.cancel()
         focusRamp?.cancel()
+        meter.stop()
         if (recording) stopRecordingLocked()
         camera.close()
     }
@@ -143,7 +173,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
     fun selectConfig(new: VideoConfig) {
         if (recording || new == config) return
         config = new
-        applyMonitor()
+        pushMonitor()
         op("Reconfigurando…") {
             if (camera.isOpen) camera.open(renderer.surfaceTexture.await(), new)
             updateFreeSpace()
@@ -237,24 +267,63 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
     private fun startHudLoop() {
         if (hudLoop?.isActive == true) return
         hudLoop = scope.launch {
+            var tick = 0
+            var hold = -100f
             while (isActive) {
                 measured = camera.measured
-                delay(250)
+                scopes = renderer.scopes
+                // VU: pico com queda de ~20 dB/s.
+                val peak = recorder?.audioPeak ?: meter.peak
+                val db = toDbfs(peak)
+                hold = maxOf(db, hold - 2f)
+                audioDb = hold
+                if (peak >= 0.99f && recording) audioClipped = true
+                if (tick++ % 10 == 0) {
+                    thermalStatus = power.currentThermalStatus
+                    thermalHeadroom = power.getThermalHeadroom(10).takeIf { !it.isNaN() }
+                }
+                delay(100)
             }
         }
     }
 
     private fun nearest(list: List<Int>, v: Int) = list.minByOrNull { kotlin.math.abs(it - v) } ?: v
 
-    fun toggleMonitor709() {
-        if (recording) return
-        monitor709 = !monitor709
-        applyMonitor()
+    /** Muda uma opção de monitoramento; vale na hora, inclusive durante a gravação. */
+    fun updateMonitor(new: MonitorOptions) {
+        monitor = new
+        pushMonitor()
+        prefs.edit().putString(KEY_MONITOR, JSONObject()
+            .put("lut", new.lut).put("falseColor", new.falseColor).put("zebra", new.zebra)
+            .put("zebraLevel", new.zebraLevel.toDouble()).put("peaking", new.peaking)
+            .put("peakingThreshold", new.peakingThreshold.toDouble()).put("peakingColor", new.peakingColor)
+            .put("scopes", new.scopes).toString()).apply()
     }
 
-    /** A conversão Log → 709 só vale para imagem em Log; em Normal o preview fica como está. */
-    private fun applyMonitor() {
-        renderer.monitor709 = monitor709 && config.isLog
+    fun selectLut(name: String) {
+        runCatching {
+            val text = app.assets.open(name).bufferedReader().use { it.readText() }
+            renderer.setLut(name, text)
+            lutName = name
+            prefs.edit().putString(KEY_LUT, name).apply()
+        }.onFailure { status = "LUT inválida ($name): ${it.message}" }
+    }
+
+    /** A LUT Log → 709 só vale para imagem em Log; em Normal o preview fica como está. */
+    private fun pushMonitor() {
+        renderer.options = monitor.copy(lut = monitor.lut && config.isLog, isLog = config.isLog)
+    }
+
+    private fun loadMonitor(): MonitorOptions {
+        val o = prefs.getString(KEY_MONITOR, null)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return MonitorOptions()
+        val d = MonitorOptions()
+        return MonitorOptions(
+            lut = o.optBoolean("lut", d.lut), falseColor = o.optBoolean("falseColor"), zebra = o.optBoolean("zebra"),
+            zebraLevel = o.optDouble("zebraLevel", d.zebraLevel.toDouble()).toFloat(),
+            peaking = o.optBoolean("peaking"),
+            peakingThreshold = o.optDouble("peakingThreshold", d.peakingThreshold.toDouble()).toFloat(),
+            peakingColor = o.optInt("peakingColor", d.peakingColor), scopes = o.optBoolean("scopes"),
+        )
     }
 
     fun toggleRecording() = op(null) {
@@ -263,6 +332,8 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private suspend fun startRecordingLocked() {
         check(camera.isOpen) { "câmera fechada" }
+        meter.stop()
+        audioClipped = false
         val rec = Recorder(app, camera, withAudio)
         withContext(Dispatchers.Default) { rec.start(orientationHint = uprightRotation()) }
         recorder = rec
@@ -292,6 +363,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         val report = withContext(Dispatchers.Default) { rec.stop() }
         recorder = null
         recording = false
+        if (withAudio) meter.start()
         val cam = report.optJSONObject("camera")
         val mux = report.optJSONObject("muxer")
         lastResult = if (report.optString("status") == "ok") {
@@ -311,6 +383,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         scope.launch {
             mutex.withLock {
                 runCatching { if (recording) stopRecordingLocked() }
+                meter.stop()
                 camera.release()
                 renderer.release()
             }
@@ -329,6 +402,8 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
     companion object {
         private const val KEY_SETTINGS = "ajustes"
         private const val KEY_PRESETS = "presets"
+        private const val KEY_MONITOR = "monitor"
+        private const val KEY_LUT = "lut"
     }
 
     private fun op(message: String?, block: suspend () -> Unit) {
