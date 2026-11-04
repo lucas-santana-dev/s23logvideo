@@ -17,6 +17,11 @@ pega as `.cube` novas no próximo build. Para uma LUT mais fina (65³) só para 
 
 No app, o ⚙ escolhe qual LUT o chip **LUT** aplica ao preview.
 
+## Aplicar a LUT sem depender do editor
+
+`python tools/aplicar_lut.py take.mp4` converte o take para Rec.709 (BT.709 de verdade) com a LUT, do jeito
+certo. Detalhes, a variante `sem_gamut` para A/B e o que não fazer antes da LUT: `docs/pos-producao.md`.
+
 ## Validação com cartão cinza
 
 1. Cartão cinza 18% (ou um cinza neutro de papelaria) ocupando o centro da imagem, luz uniforme.

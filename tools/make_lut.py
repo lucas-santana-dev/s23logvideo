@@ -73,9 +73,14 @@ def oetf709(x):
     return 4.5 * x if x < 0.018 else 1.099 * x ** 0.45 - 0.099
 
 
-def log_to_rec709(rgb, a, c, d):
+def log_to_rec709(rgb, a, c, d, gamut=True):
+    """gamut=False pula a matriz BT.2020 -> BT.709: serve para comparar quando há dúvida se o dado do ISP
+    está mesmo em BT.2020 (ver docs/pos-producao.md)."""
     lin = [10.0 ** ((v - d) / a) - c for v in rgb]
-    lin709 = [max(0.0, sum(m * v for m, v in zip(row, lin))) for row in BT2020_TO_709]
+    if gamut:
+        lin709 = [max(0.0, sum(m * v for m, v in zip(row, lin))) for row in BT2020_TO_709]
+    else:
+        lin709 = [max(0.0, v) for v in lin]
     return [oetf709(rolloff(v)) for v in lin709]
 
 
@@ -107,14 +112,15 @@ def look_filme(rgb):
 LOOKS = {"filme": look_filme}
 
 
-def write_cube(path: Path, size: int, a, c, d, k, look=None, title="LogCam to Rec709"):
+def write_cube(path: Path, size: int, a, c, d, k, look=None, title="LogCam to Rec709", gamut=True):
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         f'TITLE "{title}"',
         f"# Gerado por tools/make_lut.py a partir de color/LogCurve.kt",
         f"# GRAY_IN={k['GRAY_IN']} GRAY_OUT={k['GRAY_OUT']} BLACK_OUT={k['BLACK_OUT']} WHITE_OUT={k['WHITE_OUT']}",
         f"# y = {a:.6f}*log10(x + {c:.6f}) + {d:.6f}",
-        "# Entrada: LogCam (BT.2020). Saída: Rec.709 (BT.709, gama 709) com rolloff acima de 0,8.",
+        "# Entrada: LogCam (BT.2020). Saída: Rec.709 (BT.709, gama 709) com rolloff acima de 0,8."
+        if gamut else "# Entrada: LogCam. Saída: gama 709 com rolloff, SEM conversão de gamut (dado tratado como já em BT.709).",
         *([f"# Look criativo: {look.__name__}"] if look else []),
         f"LUT_3D_SIZE {size}",
         "DOMAIN_MIN 0.0 0.0 0.0",
@@ -125,7 +131,7 @@ def write_cube(path: Path, size: int, a, c, d, k, look=None, title="LogCam to Re
     for bi in range(size):
         for gi in range(size):
             for ri in range(size):
-                out = log_to_rec709((ri / n, gi / n, bi / n), a, c, d)
+                out = log_to_rec709((ri / n, gi / n, bi / n), a, c, d, gamut)
                 if look:
                     out = look(out)
                 lines.append(" ".join(f"{min(max(v, 0.0), 1.0):.6f}" for v in out))
@@ -143,6 +149,10 @@ def main():
     k = read_constants(LOGCURVE_KT)
     a, c, d = solve_curve(k)
     write_cube(args.out, args.size, a, c, d, k)
+    # Variante sem conversão de gamut, para A/B (se a pele ou o céu saírem saturados demais com a técnica).
+    sem = args.out.with_name(args.out.stem + "_sem_gamut" + args.out.suffix)
+    write_cube(sem, args.size, a, c, d, k, title="LogCam to Rec709 sem gamut", gamut=False)
+    print(f"escrito: {sem} ({args.size}^3, sem conversão de gamut)")
     if args.look != "none":
         look_out = args.out.with_name("LogCam_Look_Filme.cube")
         write_cube(look_out, args.size, a, c, d, k, look=LOOKS[args.look], title="LogCam Look Filme")
