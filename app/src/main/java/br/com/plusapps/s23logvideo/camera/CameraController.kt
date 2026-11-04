@@ -102,6 +102,11 @@ class CameraController(context: Context) {
                 val pts = LogCurve.tonemapPoints(maxCurvePoints())
                 set(CaptureRequest.TONEMAP_MODE, CameraMetadata.TONEMAP_MODE_CONTRAST_CURVE)
                 set(CaptureRequest.TONEMAP_CURVE, TonemapCurve(pts, pts, pts))
+                // Log: o mínimo de processamento possível no ISP (sem nitidez artificial, ruído quase cru).
+                if (supportsEdgeOff()) set(CaptureRequest.EDGE_MODE, CameraMetadata.EDGE_MODE_OFF)
+                if (supportsNrMinimal()) {
+                    set(CaptureRequest.NOISE_REDUCTION_MODE, CameraMetadata.NOISE_REDUCTION_MODE_MINIMAL)
+                }
             }
         }.build()
         s.setRepeatingRequest(request, callback, cameraHandler)
@@ -128,6 +133,13 @@ class CameraController(context: Context) {
 
     private fun hasOis() = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)
         ?.contains(CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON) == true
+
+    private fun supportsEdgeOff() = characteristics.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES)
+        ?.contains(CameraMetadata.EDGE_MODE_OFF) == true
+
+    private fun supportsNrMinimal() =
+        characteristics.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES)
+            ?.contains(CameraMetadata.NOISE_REDUCTION_MODE_MINIMAL) == true
 
     private fun maxCurvePoints() =
         (characteristics.get(CameraCharacteristics.TONEMAP_MAX_CURVE_POINTS) ?: 64).coerceIn(2, 64)
