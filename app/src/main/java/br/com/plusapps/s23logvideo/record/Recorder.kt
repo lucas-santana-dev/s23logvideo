@@ -1,0 +1,116 @@
+package br.com.plusapps.s23logvideo.record
+
+import android.content.Context
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CaptureFailure
+import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.TotalCaptureResult
+import android.net.Uri
+import android.os.ParcelFileDescriptor
+import android.os.PowerManager
+import br.com.plusapps.s23logvideo.camera.CameraController
+import br.com.plusapps.s23logvideo.probe.ProbeRunner
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONObject
+
+/**
+ * Uma gravação: vídeo da sessão de câmera já aberta + áudio, num MP4 em DCIM/LogCam.
+ * Ao parar, salva um relatório JSON em Download/LogCam/gravacoes.
+ */
+class Recorder(
+    private val context: Context,
+    private val camera: CameraController,
+    private val withAudio: Boolean,
+) {
+    private val power = context.getSystemService(PowerManager::class.java)
+    private val config = camera.config ?: error("câmera não configurada")
+    val name = "LogCam_${ProbeRunner.timestamp()}"
+
+    private lateinit var uri: Uri
+    private lateinit var pfd: ParcelFileDescriptor
+    private lateinit var sink: MuxerSink
+    private lateinit var video: VideoEncoder
+    private var audio: AudioEncoder? = null
+    private val stats = FrameStats(1_000_000_000L / config.fps)
+    private var startNanos = 0L
+    private var thermalStart = 0
+    private var audioError: String? = null
+
+    val droppedFrames get() = stats.droppedFrames
+    val elapsedMs get() = if (startNanos == 0L) 0L else (System.nanoTime() - startNanos) / 1_000_000
+
+    fun start(orientationHint: Int) {
+        thermalStart = power.currentThermalStatus
+        uri = MediaStoreOut.newVideo(context, name, MediaStoreOut.RECORD_DIR)
+        pfd = context.contentResolver.openFileDescriptor(uri, "rw")!!
+        sink = MuxerSink(pfd.fileDescriptor, orientationHint, expectAudio = withAudio)
+        if (withAudio) {
+            // Áudio primeiro: se falhar, nada do vídeo foi mexido ainda.
+            try {
+                audio = AudioEncoder(sink).also { it.start() }
+            } catch (t: Throwable) {
+                sink.stop()
+                runCatching { pfd.close() }
+                MediaStoreOut.delete(context, uri)
+                throw IllegalStateException("áudio falhou: $t", t)
+            }
+        }
+        video = camera.takeEncoder()
+        video.sink = sink
+        video.start()
+        camera.setRepeating(recording = true, callback = object : CameraCaptureSession.CaptureCallback() {
+            override fun onCaptureCompleted(s: CameraCaptureSession, r: CaptureRequest, result: TotalCaptureResult) =
+                stats.onResult(result)
+
+            override fun onCaptureFailed(s: CameraCaptureSession, r: CaptureRequest, f: CaptureFailure) =
+                stats.onFailure()
+        })
+        startNanos = System.nanoTime()
+    }
+
+    /** Para na ordem: câmera → EOS do vídeo → áudio → muxer. Devolve o relatório. */
+    suspend fun stop(): JSONObject {
+        val durationMs = elapsedMs
+        camera.setRepeating(recording = false, callback = null)
+        delay(150) // quadros já em voo ainda chegam ao encoder
+        runCatching { video.signalEndOfStream() }
+        val videoEos = withTimeoutOrNull(3_000) { runCatching { video.eos.await() }.isSuccess } ?: false
+        sink.endAudioAfterVideo(1_000_000L / config.fps)
+        audio?.stop()
+        val ok = sink.stop()
+        video.release()
+        camera.prepareNextEncoder()
+        runCatching { pfd.close() }
+        if (ok) MediaStoreOut.publish(context, uri) else MediaStoreOut.delete(context, uri)
+
+        val videoSec = (sink.lastVideoPtsUs - sink.firstVideoPtsUs) / 1e6
+        val audioSec = (sink.lastAudioPtsUs - sink.firstAudioPtsUs) / 1e6
+        val report = JSONObject()
+            .put("arquivo", if (ok) "${MediaStoreOut.RECORD_DIR}/$name.mp4" else JSONObject.NULL)
+            .put("status", if (ok) "ok" else "falhou")
+            .put("config", config.toJson())
+            .put("encoder", video.codecName)
+            .put("formatoDeSaidaDoEncoder", video.outputFormat ?: JSONObject.NULL)
+            .put("duracaoMs", durationMs)
+            .put("eosDoVideo", videoEos)
+            .put("camera", stats.toJson())
+            .put(
+                "muxer", JSONObject()
+                    .put("amostrasVideo", sink.videoSamples)
+                    .put("amostrasAudio", sink.audioSamples)
+                    .put("duracaoVideoS", videoSec)
+                    .put("duracaoAudioS", if (withAudio) audioSec else JSONObject.NULL)
+                    .put("inicioAudioMenosVideoMs", if (withAudio) (sink.firstAudioPtsUs - sink.firstVideoPtsUs) / 1e3 else JSONObject.NULL)
+                    .put("audioDescartadoAntesDoVideo", sink.droppedAudioBeforeVideo)
+                    .put("audioDescartadoDepoisDoVideo", sink.droppedAudioAfterVideo)
+                    .put("bitrateRealMbps", if (videoSec > 0) sink.videoBytes * 8 / videoSec / 1e6 else JSONObject.NULL)
+            )
+            .put("audio", audio?.toJson() ?: JSONObject().put("ativo", false).put("erro", audioError ?: JSONObject.NULL))
+            .put("termico", JSONObject().put("inicio", thermalStart).put("fim", power.currentThermalStatus))
+        runCatching {
+            MediaStoreOut.writeReport(context, "$name.json", report.toString(2), "gravacoes")
+        }
+        return report
+    }
+}

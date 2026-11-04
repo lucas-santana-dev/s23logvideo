@@ -22,8 +22,7 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun ProbeScreen(
     controller: ProbeController,
-    hasPermissions: Boolean,
-    onRequestPermissions: () -> Unit,
+    onBack: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -32,12 +31,9 @@ fun ProbeScreen(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("LogCam · Fase 0 (Probe)", style = MaterialTheme.typography.headlineSmall)
-
-        if (!hasPermissions) {
-            Text("O app precisa de acesso à câmera e ao microfone.")
-            Button(onClick = onRequestPermissions) { Text("Conceder permissões") }
-            return@Column
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = onBack, enabled = !controller.busy) { Text("← Câmera") }
+            Text("  LogCam · Fase 0 (Probe)", style = MaterialTheme.typography.headlineSmall)
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {

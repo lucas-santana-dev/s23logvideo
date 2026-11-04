@@ -8,6 +8,7 @@ import android.provider.MediaStore
 /** Saídas via MediaStore: vídeos em DCIM/LogCam, relatórios JSON em Download/LogCam. */
 object MediaStoreOut {
     const val VIDEO_DIR = "DCIM/LogCam/probe"
+    const val RECORD_DIR = "DCIM/LogCam"
     const val REPORT_DIR = "Download/LogCam"
 
     fun newVideo(context: Context, displayName: String, relativePath: String = VIDEO_DIR): Uri {
