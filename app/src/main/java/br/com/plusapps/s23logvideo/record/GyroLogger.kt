@@ -22,7 +22,7 @@ class GyroLogger(context: Context) {
     private val gyro: Sensor? = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE_UNCALIBRATED)
         ?: sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
     private val accel: Sensor? = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-    private val thread = HandlerThread("gyro").apply { start() }
+    private var thread: HandlerThread? = null
 
     /** (t_monotonic_ns, gx, gy, gz) e o último acelerômetro, em m/s². */
     private val samples = ArrayList<FloatArray>(200 * 60 * 12)
@@ -51,14 +51,17 @@ class GyroLogger(context: Context) {
     fun start() {
         val g = gyro ?: return
         clockOffsetNs = SystemClock.elapsedRealtimeNanos() - System.nanoTime()
-        val h = Handler(thread.looper)
+        val t = HandlerThread("gyro").apply { start() }
+        thread = t
+        val h = Handler(t.looper)
         sm.registerListener(listener, g, SensorManager.SENSOR_DELAY_FASTEST, h)
         accel?.let { sm.registerListener(listener, it, SensorManager.SENSOR_DELAY_FASTEST, h) }
     }
 
     fun stop() {
         sm.unregisterListener(listener)
-        thread.quitSafely()
+        thread?.quitSafely()
+        thread = null
     }
 
     /**

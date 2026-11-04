@@ -101,7 +101,12 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
     var lastResult by mutableStateOf<String?>(null)
         private set
 
+    /** Vem da Activity quando a permissão do microfone é conhecida; liga o VU fora da gravação. */
     var withAudio = false
+        set(v) {
+            field = v
+            if (v && !recording) meter.start() else if (!v) meter.stop()
+        }
 
     // ---- Fase 3: controles manuais ----
     private val prefs = app.getSharedPreferences("logcam", Context.MODE_PRIVATE)

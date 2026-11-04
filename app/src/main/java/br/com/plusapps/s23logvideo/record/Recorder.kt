@@ -30,7 +30,7 @@ class Recorder(
     private var maxSkewNs = 0L
 
     /** Amostra térmica (a cada ~1 s, vinda do ViewModel) para o relatório. */
-    fun thermalSample(status: Int, headroom: Float?) {
+    fun thermalSample(status: Int, headroom: Float?) = synchronized(thermalLog) {
         thermalLog.put(org.json.JSONObject().put("s", elapsedMs / 1000).put("status", status)
             .put("headroom", headroom?.toDouble() ?: org.json.JSONObject.NULL))
     }
@@ -132,7 +132,8 @@ class Recorder(
                     .put("bitrateRealMbps", if (videoSec > 0) sink.videoBytes * 8 / videoSec / 1e6 else JSONObject.NULL)
             )
             .put("audio", audio?.toJson() ?: JSONObject().put("ativo", false).put("erro", audioError ?: JSONObject.NULL))
-            .put("termico", JSONObject().put("inicio", thermalStart).put("fim", power.currentThermalStatus).put("amostras", thermalLog))
+            .put("termico", JSONObject().put("inicio", thermalStart).put("fim", power.currentThermalStatus)
+                .put("amostras", synchronized(thermalLog) { org.json.JSONArray(thermalLog.toString()) }))
             .put("lente", JSONObject().put("nome", camera.lens.name).put("cameraId", camera.cameraId)
                 .put("fisica", camera.lens.physicalId ?: JSONObject.NULL)
                 .put("focalMm", camera.focalLengthMm?.toDouble() ?: JSONObject.NULL))

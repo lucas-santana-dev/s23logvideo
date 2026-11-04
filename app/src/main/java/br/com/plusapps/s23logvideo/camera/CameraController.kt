@@ -199,6 +199,8 @@ class CameraController(context: Context) {
         val cb = tapDone
         tapRegion = null
         tapDone = null
+        // Sai do AF de disparo único mesmo que o foco não tenha travado (timeout).
+        applyRepeating()
         cb?.invoke(diopters)
     }
 
