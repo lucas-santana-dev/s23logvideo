@@ -54,8 +54,12 @@ class GyroLogger(context: Context) {
         val t = HandlerThread("gyro").apply { start() }
         thread = t
         val h = Handler(t.looper)
-        sm.registerListener(listener, g, SensorManager.SENSOR_DELAY_FASTEST, h)
-        accel?.let { sm.registerListener(listener, it, SensorManager.SENSOR_DELAY_FASTEST, h) }
+        // Taxa máxima; se o sistema recusar (SecurityException sem HIGH_SAMPLING_RATE_SENSORS), cai para
+        // 200 Hz. O giroscópio nunca pode impedir a gravação.
+        for (sensor in listOfNotNull(g, accel)) {
+            val ok = runCatching { sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_FASTEST, h) }.getOrDefault(false)
+            if (!ok) runCatching { sm.registerListener(listener, sensor, 5_000, h) }
+        }
     }
 
     fun stop() {

@@ -88,7 +88,7 @@ class Recorder(
             override fun onCaptureFailed(s: CameraCaptureSession, r: CaptureRequest, f: CaptureFailure) =
                 stats.onFailure()
         })
-        gyro?.start()
+        runCatching { gyro?.start() }
         startNanos = System.nanoTime()
     }
 
@@ -138,6 +138,7 @@ class Recorder(
                 .put("fisica", camera.lens.physicalId ?: JSONObject.NULL)
                 .put("focalMm", camera.focalLengthMm?.toDouble() ?: JSONObject.NULL))
             .put("bitrateDoEncoder", video.bitrate)
+            .put("spsReescritoParaBt709", video.spsPatched)
             .put("rollingShutterMs", if (maxSkewNs > 0) maxSkewNs / 1e6 else JSONObject.NULL)
             .put("giroscopio", gyro?.let { g ->
                 JSONObject().put("sensor", g.sensorName).put("amostras", g.sampleCount)

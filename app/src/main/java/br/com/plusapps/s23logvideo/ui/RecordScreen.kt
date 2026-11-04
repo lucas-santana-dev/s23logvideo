@@ -13,7 +13,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -77,7 +80,7 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
         )
 
         // Topo: modo, espaço livre, status
-        Column(Modifier.align(Alignment.TopStart).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.displayCutout).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val canChange = !vm.recording && !vm.busy
             Row(
                 Modifier.horizontalScroll(rememberScrollState()),
@@ -141,7 +144,9 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
 
         ManualControls(
             vm, panel, onPanel = { panel = if (panel == it) Panel.NONE else it },
-            modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 12.dp, end = 140.dp),
+            // Afasta do furo da câmera frontal, que fica na borda esquerda com o celular deitado.
+            modifier = Modifier.align(Alignment.BottomStart).windowInsetsPadding(WindowInsets.displayCutout)
+                .padding(start = 12.dp, bottom = 12.dp, end = 140.dp),
         )
 
         vm.scopes?.let { ScopesView(it, cfg.isLog, Modifier.align(Alignment.TopEnd).padding(top = 110.dp, end = 140.dp)) }
