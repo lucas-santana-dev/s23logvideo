@@ -36,12 +36,17 @@ class Recorder(
     private var startNanos = 0L
     private var thermalStart = 0
     private var audioError: String? = null
+    private var settingsAtStart: JSONObject = JSONObject()
 
     val droppedFrames get() = stats.droppedFrames
     val elapsedMs get() = if (startNanos == 0L) 0L else (System.nanoTime() - startNanos) / 1_000_000
 
     fun start(orientationHint: Int) {
         thermalStart = power.currentThermalStatus
+        settingsAtStart = camera.settings.toJson().put("medidoNoInicio", camera.measured.let {
+            JSONObject().put("iso", it.iso ?: JSONObject.NULL).put("exposicaoNs", it.exposureNs ?: JSONObject.NULL)
+                .put("focoDioptrias", it.focusDiopters?.toDouble() ?: JSONObject.NULL)
+        })
         uri = MediaStoreOut.newVideo(context, name, MediaStoreOut.RECORD_DIR)
         pfd = context.contentResolver.openFileDescriptor(uri, "rw")!!
         sink = MuxerSink(pfd.fileDescriptor, orientationHint, expectAudio = withAudio)
@@ -90,6 +95,7 @@ class Recorder(
             .put("arquivo", if (ok) "${MediaStoreOut.RECORD_DIR}/$name.mp4" else JSONObject.NULL)
             .put("status", if (ok) "ok" else "falhou")
             .put("config", config.toJson())
+            .put("ajustes", settingsAtStart)
             .put("encoder", video.codecName)
             .put("formatoDeSaidaDoEncoder", video.outputFormat ?: JSONObject.NULL)
             .put("duracaoMs", durationMs)

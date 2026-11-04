@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -20,7 +21,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,9 +52,16 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
         onStopOrDispose { vm.onStop() }
     }
 
+    var panel by rememberSaveable { mutableStateOf(Panel.NONE) }
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().pointerInput(vm) {
+                detectTapGestures { o ->
+                    // Com uma roda aberta, o 1º toque na imagem só fecha a roda.
+                    if (panel != Panel.NONE) panel = Panel.NONE else vm.onPreviewTap(o.x, o.y)
+                }
+            },
             factory = { ctx ->
                 SurfaceView(ctx).apply {
                     holder.addCallback(object : SurfaceHolder.Callback {
@@ -98,7 +113,21 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
             vm.lastResult?.let { Hud(it) }
         }
 
-        TextButton(onClick = onOpenProbe, enabled = !vm.recording, modifier = Modifier.align(Alignment.BottomStart)) {
+        // Quadradinho do toque para focar.
+        vm.tapPoint?.let { (x, y) ->
+            val half = with(LocalDensity.current) { 36.dp.toPx() }
+            Box(
+                Modifier.offset { androidx.compose.ui.unit.IntOffset((x - half).toInt(), (y - half).toInt()) }
+                    .size(72.dp).border(2.dp, Color(0xFFFFC107), RoundedCornerShape(4.dp)),
+            )
+        }
+
+        ManualControls(
+            vm, panel, onPanel = { panel = if (panel == it) Panel.NONE else it },
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 12.dp, end = 140.dp),
+        )
+
+        TextButton(onClick = onOpenProbe, enabled = !vm.recording, modifier = Modifier.align(Alignment.BottomEnd)) {
             Text("Probe")
         }
 
@@ -125,7 +154,7 @@ fun RecordScreen(vm: CameraViewModel, onOpenProbe: () -> Unit) {
 }
 
 @Composable
-private fun Hud(text: String) {
+internal fun Hud(text: String) {
     Text(
         text, color = Color.White, fontSize = 12.sp,
         modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp),

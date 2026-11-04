@@ -43,6 +43,11 @@ class PreviewRenderer {
     private val texMatrix = FloatArray(16)
     private val mvp = FloatArray(16)
 
+    // Geometria do último quadro desenhado, para converter um toque na tela em coordenadas do buffer.
+    @Volatile private var lastGeom: Geom? = null
+
+    private class Geom(val tex: FloatArray, val sx: Float, val sy: Float, val rot: Int, val w: Int, val h: Int)
+
     /** Tamanho do buffer da câmera (para o aspect-fit). */
     @Volatile var inputWidth = 1920
     @Volatile var inputHeight = 1080
@@ -98,6 +103,28 @@ class PreviewRenderer {
         }
     }
 
+    /**
+     * Converte um toque (pixels da view) em coordenadas normalizadas do buffer da câmera
+     * (0..1, origem no canto superior esquerdo). null se o toque caiu fora da imagem.
+     * Desfaz, na ordem inversa, o que o draw() faz: aspect-fit, rotação e a matriz da SurfaceTexture.
+     */
+    fun viewToBuffer(x: Float, y: Float): Pair<Float, Float>? {
+        val g = lastGeom ?: return null
+        if (g.w == 0 || g.h == 0) return null
+        val px = (2f * x / g.w - 1f) / g.sx
+        val py = (1f - 2f * y / g.h) / g.sy
+        if (px !in -1f..1f || py !in -1f..1f) return null
+        val a = Math.toRadians(-g.rot.toDouble())
+        val qx = (px * kotlin.math.cos(a) - py * kotlin.math.sin(a)).toFloat()
+        val qy = (px * kotlin.math.sin(a) + py * kotlin.math.cos(a)).toFloat()
+        val u = (qx + 1f) / 2f
+        val v = (qy + 1f) / 2f
+        val st = FloatArray(4)
+        Matrix.multiplyMV(st, 0, g.tex, 0, floatArrayOf(u, v, 0f, 1f), 0)
+        // t = 0 é a primeira linha do buffer (topo da imagem); a matriz já inclui o flip vertical.
+        return st[0].coerceIn(0f, 1f) to st[1].coerceIn(0f, 1f)
+    }
+
     fun release() {
         handler.post {
             runCatching { texture.release() }
@@ -136,6 +163,7 @@ class PreviewRenderer {
         Matrix.setIdentityM(mvp, 0)
         Matrix.scaleM(mvp, 0, sx, sy, 1f)
         Matrix.rotateM(mvp, 0, rot.toFloat(), 0f, 0f, 1f)
+        lastGeom = Geom(texMatrix.copyOf(), sx, sy, rot, viewW, viewH)
 
         GLES20.glViewport(0, 0, viewW, viewH)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
