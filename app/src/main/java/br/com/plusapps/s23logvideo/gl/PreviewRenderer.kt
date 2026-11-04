@@ -13,6 +13,7 @@ import android.opengl.Matrix
 import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
+import br.com.plusapps.s23logvideo.color.LogCurve
 import kotlinx.coroutines.CompletableDeferred
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -21,7 +22,8 @@ import java.nio.FloatBuffer
 /**
  * Preview em OpenGL: a câmera escreve numa SurfaceTexture (textura OES), e esta classe
  * desenha num SurfaceView com aspect-fit e rotação. Na Fase 4 é aqui que entram LUT,
- * false color, zebra e peaking; na Fase 1 o shader só copia.
+ * false color, zebra e peaking. Na Fase 2 o shader pode converter Log → Rec.709 só para a tela
+ * ([monitor709]); o arquivo gravado continua em Log.
  */
 class PreviewRenderer {
     private val thread = HandlerThread("gl").apply { start() }
@@ -50,6 +52,12 @@ class PreviewRenderer {
 
     /** SENSOR_ORIENTATION da câmera em uso. */
     @Volatile var sensorOrientation = 90
+
+    /**
+     * Monitoramento Log → Rec.709 no preview (só a tela; o arquivo continua em Log).
+     * Mesma conversão de `tools/make_lut.py`. Só faz sentido com a imagem em Log.
+     */
+    @Volatile var monitor709 = false
 
     val surfaceTexture = CompletableDeferred<SurfaceTexture>()
 
@@ -137,6 +145,11 @@ class PreviewRenderer {
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, texId)
         GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(program, "uMvp"), 1, false, mvp, 0)
         GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(program, "uTex"), 1, false, texMatrix, 0)
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uImage"), 0)
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uLogA"), LogCurve.a.toFloat())
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uLogC"), LogCurve.c.toFloat())
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uLogD"), LogCurve.d.toFloat())
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uToRec709"), if (monitor709) 1f else 0f)
         val aPos = GLES20.glGetAttribLocation(program, "aPos")
         val aUv = GLES20.glGetAttribLocation(program, "aUv")
         GLES20.glEnableVertexAttribArray(aPos)
@@ -205,11 +218,40 @@ class PreviewRenderer {
         """
         private const val FRAGMENT = """
             #extension GL_OES_EGL_image_external : require
-            precision mediump float;
+            precision highp float;
             uniform samplerExternalOES uImage;
+            uniform float uLogA;
+            uniform float uLogC;
+            uniform float uLogD;
+            uniform float uToRec709;
             varying vec2 vUv;
+
+            // BT.2020 -> BT.709 em luz linear. GLSL monta mat3 por colunas: estas são as
+            // COLUNAS da matriz de linhas [1.6605,-0.5876,-0.0728; -0.1246,1.1329,-0.0083; -0.0182,-0.1006,1.1187].
+            const mat3 BT2020_TO_709 = mat3(
+                1.6605, -0.1246, -0.0182,
+                -0.5876, 1.1329, -0.1006,
+                -0.0728, -0.0083, 1.1187
+            );
+
+            float rolloff(float x) {
+                return x > 0.8 ? 0.8 + 0.2 * (1.0 - exp(-(x - 0.8) / 0.2)) : x;
+            }
+
+            float oetf709(float x) {
+                return x < 0.018 ? 4.5 * x : 1.099 * pow(x, 0.45) - 0.099;
+            }
+
             void main() {
-                gl_FragColor = texture2D(uImage, vUv);
+                vec4 c = texture2D(uImage, vUv);
+                if (uToRec709 > 0.5) {
+                    // Inversa da LogCurve: y = a*log10(x + c) + d  ->  x = 10^((y - d)/a) - c
+                    vec3 lin = pow(vec3(10.0), (c.rgb - vec3(uLogD)) / uLogA) - vec3(uLogC);
+                    lin = max(BT2020_TO_709 * lin, vec3(0.0));
+                    lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));
+                    c.rgb = vec3(oetf709(lin.r), oetf709(lin.g), oetf709(lin.b));
+                }
+                gl_FragColor = c;
             }
         """
     }
