@@ -25,6 +25,21 @@ Notas: o preview remoto só é gerado enquanto alguém está assistindo. Ele cus
 aquece; feche a aba quando não precisar. O app precisa ficar aberto e com a tela ligada (ela não
 apaga sozinha).
 
+## Tela bloqueada
+
+Com o **remoto ligado** ou **durante uma gravação**, dá para **bloquear a tela** (botão lateral): a
+câmera, a gravação, o áudio e o controle remoto (inclusive o preview) continuam. Enquanto isso fica a
+notificação fixa "LogCam" (serviço em primeiro plano de câmera + microfone, exigência do Android para
+usar câmera/microfone com a tela apagada). Com a tela apagada o app não desenha o preview na tela, o
+que poupa GPU, tela e calor. Ao desbloquear, a tela volta onde estava.
+
+Conferido no S23: tela em "Dozing", preview remoto a ~10 fps e um take de 6 s gravado pelo PC
+(29,8 fps, áudio completo).
+
+Limites: o serviço só pode ser ligado com o app aberto e visível (regra do Android), então ligue o
+remoto ou comece a gravar antes de bloquear. Sem remoto e sem gravação, bloquear a tela fecha a câmera
+como antes (economia total).
+
 ## Rotação
 
 O app gira com o aparelho (`fullSensor`). Em **retrato**: chips em cima, barra de controles rolando
@@ -45,4 +60,5 @@ orientação é **travada durante a gravação**, para o take não mudar no meio
 - [ ] Gravar em retrato: o arquivo abre em pé no PC. Durante o take, girar não muda a tela.
 - [ ] ⊘ / 👁 escondem e mostram os widgets.
 - [ ] Remoto pela mesma rede: abrir no PC, gravar, parar, mudar ISO, clicar para focar.
+- [ ] Remoto ligado, bloquear a tela, gravar e parar pelo PC; o arquivo sai inteiro e com áudio.
 - [ ] Remoto pela rede do app: criar, conectar o outro celular, abrir o endereço "rede do app".

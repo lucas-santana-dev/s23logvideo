@@ -219,9 +219,26 @@ class PreviewRenderer {
 
     private fun draw() {
         if (window == EGL14.EGL_NO_SURFACE) {
-            // Sem tela: ainda precisa consumir o quadro para a câmera não travar.
+            // Sem tela (app em segundo plano ou tela bloqueada): consome o quadro para a câmera não
+            // travar e, se alguém assiste pela web, continua gerando o preview remoto. Nada é desenhado
+            // na tela, o que poupa GPU e calor.
             EGL14.eglMakeCurrent(display, pbuffer, pbuffer, context)
             texture.updateTexImage()
+            if (remoteStreaming && frameCount++ % 3 == 1L && remoteBusy.compareAndSet(false, true)) {
+                texture.getTransformMatrix(texMatrix)
+                val swapped = kotlin.math.abs(texMatrix[0]) < 0.5f
+                val rot = if (swapped) displayDegrees else (displayDegrees - sensorOrientation + 360) % 360
+                val cw = if (swapped) inputHeight else inputWidth
+                val ch = if (swapped) inputWidth else inputHeight
+                val aspect = if (rot % 180 == 0) cw.toFloat() / ch else ch.toFloat() / cw
+                lastGeom = Geom(texMatrix.copyOf(), 1f, 1f, rot, 1, 1)
+                Matrix.setIdentityM(mvp, 0)
+                GLES20.glUseProgram(program)
+                bindCommon(program, mvp)
+                setMainUniforms(options)
+                renderRemote(rot, aspect)
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            }
             return
         }
         EGL14.eglMakeCurrent(display, window, window, context)
@@ -268,6 +285,26 @@ class PreviewRenderer {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         GLES20.glUseProgram(program)
         bindCommon(program, mvp)
+        setMainUniforms(o)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        drawRemoteIfNeeded(rot, srcAspect)
+        EGLExt.eglPresentationTimeANDROID(display, window, texture.timestamp)
+        EGL14.eglSwapBuffers(display, window)
+    }
+
+    private fun drawRemoteIfNeeded(rot: Int, srcAspect: Float) {
+        val o = options
+        // Preview remoto: a cada 3 quadros, a mesma imagem (com LUT/false color...) num FBO pequeno.
+        if (remoteStreaming && frameCount % 3 == 1L && remoteBusy.compareAndSet(false, true)) {
+            renderRemote(rot, srcAspect)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            GLES20.glViewport(0, 0, viewW, viewH)
+        }
+        if (!o.scopes) frameCount++
+    }
+
+    /** Uniforms do shader principal (LUT, false color, zebra, peaking), para a tela e o FBO remoto. */
+    private fun setMainUniforms(o: MonitorOptions) {
         val lutOn = o.lut && lutTex != 0
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTex)
@@ -289,17 +326,6 @@ class PreviewRenderer {
             (pc shr 16 and 0xFF) / 255f, (pc shr 8 and 0xFF) / 255f, (pc and 0xFF) / 255f,
         )
         GLES20.glUniform2f(GLES20.glGetUniformLocation(program, "uTexel"), 1f / inputWidth, 1f / inputHeight)
-        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
-
-        // Preview remoto: a cada 3 quadros, a mesma imagem (com LUT/false color...) num FBO pequeno.
-        if (remoteStreaming && frameCount % 3 == 1L && remoteBusy.compareAndSet(false, true)) {
-            renderRemote(rot, srcAspect)
-            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-            GLES20.glViewport(0, 0, viewW, viewH)
-        }
-        if (!o.scopes) frameCount++
-        EGLExt.eglPresentationTimeANDROID(display, window, texture.timestamp)
-        EGL14.eglSwapBuffers(display, window)
     }
 
     /** Desenha no FBO remoto, lê os pixels e manda comprimir em JPEG noutra thread. */

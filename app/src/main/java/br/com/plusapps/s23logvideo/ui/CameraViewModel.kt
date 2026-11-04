@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
+import br.com.plusapps.s23logvideo.CaptureService
 import br.com.plusapps.s23logvideo.camera.CameraController
 import br.com.plusapps.s23logvideo.camera.ExposureMode
 import br.com.plusapps.s23logvideo.camera.FocusMode
@@ -131,6 +132,8 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         set(v) {
             field = v
             if (v && !recording) meter.start() else if (!v) meter.stop()
+            // O serviço pode ter subido antes de a permissão do microfone ser conhecida: refaz com o tipo certo.
+            if (serviceOn) updateKeepAlive()
         }
 
     // ---- Fase 3: controles manuais ----
@@ -221,6 +224,9 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     fun onStop() = op(null) {
+        // Tela bloqueada / app em segundo plano com gravação ou remoto ativos: o CaptureService mantém
+        // o acesso à câmera, então nada é fechado. A tela só para de desenhar o preview.
+        if (serviceOn && (recording || remoteOn)) return@op
         hudLoop?.cancel()
         focusRamp?.cancel()
         meter.stop()
@@ -472,6 +478,29 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
 
     val remoteOn get() = server?.running == true
 
+    /** O CaptureService (primeiro plano, câmera + microfone) está ativo. */
+    private var serviceOn = false
+
+    /**
+     * Liga o CaptureService enquanto houver gravação ou remoto (para continuar com a tela bloqueada) e
+     * desliga quando não houver nenhum dos dois. Tem que ser chamado com o app visível para ligar.
+     */
+    private fun updateKeepAlive() {
+        val need = recording || remoteOn
+        if (need) {
+            val text = when {
+                recording && remoteOn -> "Gravando · controle remoto ligado"
+                recording -> "Gravando"
+                else -> "Controle remoto ligado${remoteUrl?.let { " · $it" } ?: ""}"
+            }
+            CaptureService.start(app, text, withAudio)
+            serviceOn = true
+        } else if (serviceOn) {
+            CaptureService.stop(app)
+            serviceOn = false
+        }
+    }
+
     fun toggleRemote() = if (remoteOn) stopRemote() else startRemote()
 
     fun startRemote() {
@@ -480,6 +509,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
             server = RemoteServer(app, remoteApi, remotePin).also { it.start() }
             prefs.edit().putBoolean(KEY_REMOTE, true).apply()
             refreshAddresses()
+            updateKeepAlive()
             notify("Controle remoto ligado: abra ${remoteUrl ?: "o endereço"} no outro aparelho (PIN $remotePin)", 10_000)
         }.onFailure { notify("Controle remoto falhou: ${it.message}", 10_000) }
     }
@@ -490,6 +520,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         remoteUrl = null
         remoteAddresses = emptyList()
         prefs.edit().putBoolean(KEY_REMOTE, false).apply()
+        updateKeepAlive()
     }
 
     fun newRemotePin() {
@@ -638,6 +669,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         withContext(Dispatchers.Default) { rec.start(orientationHint = uprightRotation()) }
         recorder = rec
         recording = true
+        updateKeepAlive()
         lastResult = null
         timer = scope.launch {
             var tick = 0
@@ -663,6 +695,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
         val report = withContext(Dispatchers.Default) { rec.stop() }
         recorder = null
         recording = false
+        updateKeepAlive()
         if (withAudio) meter.start()
         val cam = report.optJSONObject("camera")
         val mux = report.optJSONObject("muxer")
@@ -692,6 +725,7 @@ class CameraViewModel(private val app: Application) : AndroidViewModel(app) {
                 meter.stop()
                 server?.stop()
                 hotspot.stop()
+                CaptureService.stop(app)
                 camera.release()
                 renderer.release()
             }

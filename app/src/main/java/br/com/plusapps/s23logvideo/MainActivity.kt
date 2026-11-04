@@ -36,7 +36,11 @@ import br.com.plusapps.s23logvideo.ui.ProbeScreen
 import br.com.plusapps.s23logvideo.ui.RecordScreen
 
 class MainActivity : ComponentActivity() {
-    private val permissions = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+    private val permissions = arrayOf(
+        Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO,
+        // A notificação do CaptureService (câmera ativa com a tela bloqueada).
+        Manifest.permission.POST_NOTIFICATIONS,
+    )
     private val cameraVm: CameraViewModel by viewModels()
     private lateinit var probe: ProbeController
 

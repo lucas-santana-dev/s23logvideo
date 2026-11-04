@@ -193,6 +193,12 @@ private fun RemotePanel(vm: CameraViewModel) {
             vm.remoteAddresses.forEach { Text(it, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
             if (vm.remoteAddresses.isEmpty()) Text("(sem rede: conecte ao Wi-Fi ou crie a rede do app)", color = Color.LightGray, fontSize = 12.sp)
         }
+        if (vm.remoteOn) {
+            Text(
+                "Pode bloquear a tela: a câmera, a gravação e o remoto continuam (notificação \"LogCam\").",
+                color = Color(0xFF80D8FF), fontSize = 12.sp,
+            )
+        }
         vm.hotspotInfo?.let {
             Text("Rede do app: ${it.ssid}   senha: ${it.password}", color = Color(0xFF80D8FF), fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Text("Conecte o outro aparelho a essa rede e abra o endereço \"rede do app\" acima.", color = Color.LightGray, fontSize = 11.sp)
